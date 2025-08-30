@@ -5,8 +5,16 @@ import morgan from 'morgan';
 import { env, isDevelopment } from './config/environment';
 import { initializeDatabase, closeDatabase } from './services/database';
 
-// Import routes (will be created later)
+// Import middleware
+import { requestLogger, errorLogger } from './config/logger';
+import { sanitize } from './middleware/validation';
+import { suspiciousActivityLimiter } from './middleware/rateLimit';
+import { errorHandler, notFoundHandler, timeoutHandler } from './middleware/errorHandler';
+
+// Import routes
 import healthRoutes from './routes/health';
+import userRoutes from './routes/users';
+import memoryRoutes from './routes/memories';
 
 // Create Express application
 const app = express();
@@ -31,8 +39,12 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 
+// Request timeout handler
+app.use(timeoutHandler(30000)); // 30 seconds
+
 // Request logging
 app.use(morgan(isDevelopment ? 'dev' : 'combined'));
+app.use(requestLogger);
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -44,8 +56,16 @@ app.use((req, _res, next) => {
   next();
 });
 
+// Input sanitization
+app.use(sanitize);
+
+// Rate limiting
+app.use(suspiciousActivityLimiter);
+
 // Routes
 app.use('/health', healthRoutes);
+app.use('/users', userRoutes);
+app.use('/memories', memoryRoutes);
 
 // Root endpoint
 app.get('/', (_req, res) => {
@@ -54,29 +74,22 @@ app.get('/', (_req, res) => {
     version: '1.0.0',
     environment: env.NODE_ENV,
     timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/health',
+      users: '/users',
+      memories: '/memories',
+    },
   });
 });
 
 // 404 handler - catch all unmatched routes
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Not Found',
-    message: `Route ${req.originalUrl} not found`,
-    timestamp: new Date().toISOString(),
-  });
-});
+app.use(notFoundHandler);
+
+// Error logging middleware
+app.use(errorLogger);
 
 // Global error handler
-app.use((error: Error, _req: express.Request, res: express.Response) => {
-  console.error('Unhandled error:', error);
-  
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: isDevelopment ? error.message : 'Something went wrong',
-    timestamp: new Date().toISOString(),
-    ...(isDevelopment && { stack: error.stack }),
-  });
-});
+app.use(errorHandler);
 
 // Graceful shutdown handling
 const gracefulShutdown = (signal: string) => {
