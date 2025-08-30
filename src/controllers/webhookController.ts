@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
 import { twilioService, type TwilioWebhookPayload } from '../services/twilioService';
+import { MemoryController } from './memoryController';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
 
@@ -58,15 +59,19 @@ export class WebhookController {
       // Step 5: Create interaction record
       const interaction = await this.createInteraction(user.id, processedMessage);
 
-      // Step 6: Send acknowledgment response
+      // Step 6: Create memory from interaction
+      const memory = await this.createMemoryFromInteraction(user.id, interaction.id, processedMessage);
+
+      // Step 7: Send acknowledgment response
       await twilioService().sendWhatsAppMessage(
         processedMessage.from,
-        '✅ Message received! I\'ll process this and add it to your memories.'
+        `✅ Memory saved! I've stored your ${processedMessage.messageType.toLowerCase()} message. You can search for it later.`
       );
 
       logger.info('Webhook processed successfully', {
         userId: user.id,
         interactionId: interaction.id,
+        memoryId: memory.id,
         messageSid: processedMessage.messageSid,
         messageType: processedMessage.messageType,
       });
@@ -77,6 +82,7 @@ export class WebhookController {
         messageSid: processedMessage.messageSid,
         userId: user.id,
         interactionId: interaction.id,
+        memoryId: memory.id,
         messageType: processedMessage.messageType,
         processingStatus: 'completed',
       });
@@ -137,7 +143,7 @@ export class WebhookController {
         messageType: processedMessage.messageType,
         content: processedMessage.body || null,
         direction: 'INBOUND',
-        status: 'PENDING', // Will be updated when memory is created in Phase 3
+        status: 'PENDING', // Will be updated when memory is created
         metadata: {
           mediaFiles: processedMessage.mediaFiles,
           timestamp: processedMessage.timestamp.toISOString(),
@@ -156,5 +162,63 @@ export class WebhookController {
     });
 
     return interaction;
+  }
+
+  /**
+   * Create memory from interaction
+   */
+  private static async createMemoryFromInteraction(
+    userId: string,
+    interactionId: string,
+    processedMessage: any
+  ) {
+    // Determine content based on message type
+    let content = processedMessage.body || '';
+    let memoryType = processedMessage.messageType;
+
+    // Handle different message types
+    switch (processedMessage.messageType) {
+      case 'TEXT':
+        content = processedMessage.body || 'Text message';
+        break;
+      case 'IMAGE':
+        content = processedMessage.body || 'Image message';
+        if (processedMessage.mediaFiles.length > 0) {
+          content += ` [Media: ${processedMessage.mediaFiles[0].url}]`;
+        }
+        break;
+      case 'AUDIO':
+        content = processedMessage.body || 'Audio message';
+        if (processedMessage.mediaFiles.length > 0) {
+          content += ` [Audio: ${processedMessage.mediaFiles[0].url}]`;
+        }
+        break;
+      case 'VIDEO':
+        content = processedMessage.body || 'Video message';
+        if (processedMessage.mediaFiles.length > 0) {
+          content += ` [Video: ${processedMessage.mediaFiles[0].url}]`;
+        }
+        break;
+      case 'DOCUMENT':
+        content = processedMessage.body || 'Document message';
+        if (processedMessage.mediaFiles.length > 0) {
+          content += ` [Document: ${processedMessage.mediaFiles[0].url}]`;
+        }
+        break;
+      default:
+        content = processedMessage.body || 'Message';
+        memoryType = 'TEXT';
+    }
+
+    // Create memory using the MemoryController
+    const memory = await MemoryController.createMemoryFromInteraction(
+      userId,
+      interactionId,
+      content,
+      memoryType,
+      processedMessage.mediaFiles.map((f: any) => f.url)
+    );
+
+    return memory;
   }
 }
