@@ -275,7 +275,7 @@ describe('Error Handler Middleware', () => {
     it('should handle ValidationError', () => {
       const error = new ValidationError('Validation failed', { field: ['Invalid'] });
 
-      errorHandler(error, mockReq, mockRes, mockNext);
+      errorHandler(error, mockReq, mockRes);
 
       expect(mockRes.status).toHaveBeenCalledWith(422);
       expect(mockRes.json).toHaveBeenCalledWith(
@@ -290,7 +290,7 @@ describe('Error Handler Middleware', () => {
     it('should handle NotFoundError', () => {
       const error = new NotFoundError('Resource not found');
 
-      errorHandler(error, mockReq, mockRes, mockNext);
+      errorHandler(error, mockReq, mockRes);
 
       expect(mockRes.status).toHaveBeenCalledWith(404);
       expect(mockRes.json).toHaveBeenCalledWith(
@@ -304,7 +304,7 @@ describe('Error Handler Middleware', () => {
     it('should handle RateLimitError', () => {
       const error = new RateLimitError('Rate limit exceeded');
 
-      errorHandler(error, mockReq, mockRes, mockNext);
+      errorHandler(error, mockReq, mockRes);
 
       expect(mockRes.status).toHaveBeenCalledWith(429);
       expect(mockRes.json).toHaveBeenCalledWith(
@@ -318,7 +318,7 @@ describe('Error Handler Middleware', () => {
     it('should handle generic errors', () => {
       const error = new Error('Generic error');
 
-      errorHandler(error, mockReq, mockRes, mockNext);
+      errorHandler(error, mockReq, mockRes);
 
       expect(mockRes.status).toHaveBeenCalledWith(500);
       expect(mockRes.json).toHaveBeenCalledWith(
@@ -330,10 +330,10 @@ describe('Error Handler Middleware', () => {
     });
 
     it('should include stack trace in development', () => {
-      process.env.NODE_ENV = 'development';
+      process.env['NODE_ENV'] = 'development';
       const error = new Error('Test error');
 
-      errorHandler(error, mockReq, mockRes, mockNext);
+      errorHandler(error, mockReq, mockRes);
 
       expect(mockRes.json).toHaveBeenCalledWith(
         expect.objectContaining({
