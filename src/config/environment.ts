@@ -18,7 +18,6 @@ const envSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().default('your_twilio_account_sid'),
   TWILIO_AUTH_TOKEN: z.string().default('your_twilio_auth_token'),
   TWILIO_WHATSAPP_NUMBER: z.string().default('whatsapp:+14155238886'),
-  TWILIO_WEBHOOK_SECRET: z.string().default('your_webhook_secret'),
 
   // Mem0 Configuration
   MEM0_API_KEY: z.string().default('your_mem0_api_key'),

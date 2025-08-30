@@ -9,9 +9,12 @@ export const validate = (schema: z.ZodSchema, location: 'body' | 'query' | 'para
       const data = req[location];
       const validatedData = schema.parse(data);
       
-      // Replace the original data with validated data
-      req[location] = validatedData;
+      // Replace the original data with validated data (only for body)
+      if (location === 'body') {
+        req[location] = validatedData;
+      }
       
+      // For query and params, we just validate but don't replace (they're read-only)
       next();
     } catch (error) {
       if (error instanceof ZodError) {

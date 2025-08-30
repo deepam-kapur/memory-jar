@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
+import { MediaService } from '../services/mediaService';
 import logger from '../config/logger';
 
 export class AnalyticsController {
@@ -46,16 +47,20 @@ export class AnalyticsController {
       // Get top tags (if any memories have tags)
       const memoriesWithTags = await db.memory.findMany({
         where: {
-          tags: { isEmpty: false },
+          tags: { not: "null" },
         },
         select: { tags: true },
       });
 
       const tagCounts: Record<string, number> = {};
       memoriesWithTags.forEach(memory => {
-        memory.tags.forEach(tag => {
-          tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-        });
+        if (memory.tags && Array.isArray(memory.tags)) {
+          memory.tags.forEach((tag: any) => {
+            if (typeof tag === 'string') {
+              tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            }
+          });
+        }
       });
 
       const topTags = Object.entries(tagCounts)
@@ -67,6 +72,23 @@ export class AnalyticsController {
       const lastInteraction = await db.interaction.findFirst({
         orderBy: { timestamp: 'desc' },
         select: { timestamp: true },
+      });
+
+      // Get media deduplication statistics
+      const mediaStats = await MediaService.getMediaStats();
+
+      // Get interactions by message type
+      const interactionsByType = await db.interaction.groupBy({
+        by: ['messageType'],
+        _count: { id: true },
+        orderBy: { _count: { id: 'desc' } },
+      });
+
+      // Get interactions by status
+      const interactionsByStatus = await db.interaction.groupBy({
+        by: ['status'],
+        _count: { id: true },
+        orderBy: { _count: { id: 'desc' } },
       });
 
       const analytics = {
@@ -82,6 +104,21 @@ export class AnalyticsController {
           type: item.memoryType,
           count: item._count.id,
         })),
+        interactionsByType: interactionsByType.map(item => ({
+          type: item.messageType,
+          count: item._count.id,
+        })),
+        interactionsByStatus: interactionsByStatus.map(item => ({
+          status: item.status,
+          count: item._count.id,
+        })),
+        mediaDeduplication: {
+          totalFiles: mediaStats.totalFiles,
+          uniqueFiles: mediaStats.uniqueFiles,
+          totalSize: mediaStats.totalSize,
+          deduplicationRate: mediaStats.deduplicationRate,
+          byType: mediaStats.byType,
+        },
         topTags,
         lastIngestTime: lastInteraction?.timestamp || null,
         generatedAt: new Date().toISOString(),
@@ -92,6 +129,7 @@ export class AnalyticsController {
         totalInteractions,
         totalMemories,
         totalMediaFiles,
+        mediaDeduplicationRate: mediaStats.deduplicationRate,
       });
 
       res.json({

@@ -37,8 +37,8 @@ export class MemoryController {
         }
       }
 
-      // TODO: Integrate with Mem0 for semantic memory storage
-      // const mem0Id = await createMem0Memory(content, memoryType, tags);
+      // Create memory with Mem0 placeholder (will be implemented in Phase 3)
+      const mem0Id = `mem0_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
       const memory = await db.memory.create({
         data: {
@@ -48,7 +48,7 @@ export class MemoryController {
           memoryType,
           tags: tags || [],
           importance: importance || 1,
-          // mem0Id, // Will be added when Mem0 integration is complete
+          mem0Id, // Placeholder for Mem0 integration
         },
         include: {
           user: {
@@ -68,10 +68,19 @@ export class MemoryController {
         },
       });
 
+      // Update interaction status if provided
+      if (interactionId) {
+        await db.interaction.update({
+          where: { id: interactionId },
+          data: { status: 'PROCESSED' },
+        });
+      }
+
       logger.info('Memory created', {
         memoryId: memory.id,
         userId,
         memoryType,
+        mem0Id,
         requestId: req.id,
       });
 
@@ -84,26 +93,45 @@ export class MemoryController {
   }
 
   /**
-   * Search memories via Mem0 and enrich with DB
+   * Search memories via text search (placeholder for Mem0 semantic search)
    * GET /memories?query=<text>
    */
   static async searchMemories(req: Request, res: Response) {
     try {
-      const { query, page = 1, limit = 20 } = req.query;
+      const { query, page = 1, limit = 20, userId, memoryType, tags, minImportance, maxImportance } = req.query;
       const db = getDatabase();
 
-      // TODO: Integrate with Mem0 for semantic search
-      // const mem0Results = await searchMem0(query);
-      // const memoryIds = mem0Results.map(result => result.memoryId);
-
-      // For now, perform basic text search in database
-      const memories = await db.memory.findMany({
-        where: {
-          content: {
-            contains: query as string,
-            mode: 'insensitive',
-          },
+      // Build search conditions
+      const whereConditions: any = {
+        content: {
+          contains: query as string,
         },
+      };
+
+      // Add optional filters
+      if (userId) {
+        whereConditions.userId = userId;
+      }
+
+      if (memoryType) {
+        whereConditions.memoryType = memoryType;
+      }
+
+      if (tags && Array.isArray(tags)) {
+        whereConditions.tags = {
+          hasSome: tags,
+        };
+      }
+
+      if (minImportance || maxImportance) {
+        whereConditions.importance = {};
+        if (minImportance) whereConditions.importance.gte = Number(minImportance);
+        if (maxImportance) whereConditions.importance.lte = Number(maxImportance);
+      }
+
+      // Perform search
+      const memories = await db.memory.findMany({
+        where: whereConditions,
         skip: (Number(page) - 1) * Number(limit),
         take: Number(limit),
         orderBy: { lastAccessed: 'desc' },
@@ -126,27 +154,25 @@ export class MemoryController {
       });
 
       const total = await db.memory.count({
-        where: {
-          content: {
-            contains: query as string,
-            mode: 'insensitive',
-          },
-        },
+        where: whereConditions,
       });
 
-      // TODO: Update access count for found memories
-      // await db.memory.updateMany({
-      //   where: { id: { in: memories.map(m => m.id) } },
-      //   data: {
-      //     accessCount: { increment: 1 },
-      //     lastAccessed: new Date(),
-      //   },
-      // });
+      // Update access count and last accessed for found memories
+      if (memories.length > 0) {
+        await db.memory.updateMany({
+          where: { id: { in: memories.map(m => m.id) } },
+          data: {
+            accessCount: { increment: 1 },
+            lastAccessed: new Date(),
+          },
+        });
+      }
 
       logger.info('Memories searched', {
         query,
         resultsCount: memories.length,
         total,
+        filters: { userId, memoryType, tags, minImportance, maxImportance },
         requestId: req.id,
       });
 
@@ -163,6 +189,7 @@ export class MemoryController {
         search: {
           query,
           resultsCount: memories.length,
+          filters: { userId, memoryType, tags, minImportance, maxImportance },
         },
       });
 
@@ -178,14 +205,20 @@ export class MemoryController {
    */
   static async listAllMemories(req: Request, res: Response) {
     try {
-      const { page = 1, limit = 20 } = req.query;
+      const { page = 1, limit = 20, userId, memoryType } = req.query;
       const db = getDatabase();
 
       const skip = (Number(page) - 1) * Number(limit);
       const take = Number(limit);
 
+      // Build filter conditions
+      const whereConditions: any = {};
+      if (userId) whereConditions.userId = userId;
+      if (memoryType) whereConditions.memoryType = memoryType;
+
       const [memories, total] = await Promise.all([
         db.memory.findMany({
+          where: whereConditions,
           skip,
           take,
           orderBy: { createdAt: 'desc' },
@@ -206,7 +239,7 @@ export class MemoryController {
             },
           },
         }),
-        db.memory.count(),
+        db.memory.count({ where: whereConditions }),
       ]);
 
       const totalPages = Math.ceil(total / take);
@@ -216,6 +249,7 @@ export class MemoryController {
         total,
         page: Number(page),
         limit: Number(limit),
+        filters: { userId, memoryType },
       });
 
       res.json({
@@ -234,5 +268,47 @@ export class MemoryController {
       logger.error('Error retrieving all memories', { error });
       throw error;
     }
+  }
+
+  /**
+   * Create memory from interaction (called by webhook)
+   * This method is used internally by the webhook controller
+   */
+  static async createMemoryFromInteraction(
+    userId: string,
+    interactionId: string,
+    content: string,
+    memoryType: string,
+    mediaUrls?: string[]
+  ) {
+    const db = getDatabase();
+
+    // Create memory from interaction
+    const memory = await db.memory.create({
+      data: {
+        userId,
+        interactionId,
+        content,
+        memoryType: memoryType as any,
+        tags: [], // Will be enhanced with AI tagging in Phase 3
+        importance: 1, // Default importance, will be enhanced in Phase 3
+        mem0Id: `mem0_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+      },
+    });
+
+    // Update interaction status
+    await db.interaction.update({
+      where: { id: interactionId },
+      data: { status: 'PROCESSED' },
+    });
+
+    logger.info('Memory created from interaction', {
+      memoryId: memory.id,
+      interactionId,
+      userId,
+      memoryType,
+    });
+
+    return memory;
   }
 }
