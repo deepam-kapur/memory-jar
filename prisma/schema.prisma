@@ -100,6 +100,7 @@ model MediaFile {
   fileSize      Int      // Size in bytes
   s3Key         String   // S3 object key
   s3Url         String   // S3 URL
+  fingerprint   String   @unique // SHA-256 hash for deduplication
   transcription String?  // For audio files
   metadata      Json?    // Additional file metadata
   createdAt     DateTime @default(now())

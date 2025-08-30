@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
 import { twilioService, type TwilioWebhookPayload } from '../services/twilioService';
+import { MediaService } from '../services/mediaService';
 import { MemoryController } from './memoryController';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
@@ -32,16 +33,22 @@ export class WebhookController {
       const payload = req.body as TwilioWebhookPayload;
       const processedMessage = twilioService().processWebhookPayload(payload);
 
-      // Step 3: Check for existing interaction (idempotency)
+      // Step 3: Check for existing interaction (idempotency using MessageSid)
       const db = getDatabase();
       const existingInteraction = await db.interaction.findUnique({
         where: { messageSid: processedMessage.messageSid },
+        include: {
+          memories: true,
+          mediaFiles: true,
+        },
       });
 
       if (existingInteraction) {
         logger.info('Duplicate webhook received, returning existing interaction', {
           messageSid: processedMessage.messageSid,
           interactionId: existingInteraction.id,
+          hasMemories: existingInteraction.memories.length > 0,
+          hasMedia: existingInteraction.mediaFiles.length > 0,
         });
 
         return res.status(200).json({
@@ -49,6 +56,8 @@ export class WebhookController {
           message: 'Webhook already processed',
           messageSid: processedMessage.messageSid,
           interactionId: existingInteraction.id,
+          memoryCount: existingInteraction.memories.length,
+          mediaCount: existingInteraction.mediaFiles.length,
           processingStatus: 'already_processed',
         });
       }
@@ -59,13 +68,16 @@ export class WebhookController {
       // Step 5: Create interaction record
       const interaction = await this.createInteraction(user.id, processedMessage);
 
-      // Step 6: Create memory from interaction
-      const memory = await this.createMemoryFromInteraction(user.id, interaction.id, processedMessage);
+      // Step 6: Process media files with deduplication
+      const mediaFiles = await this.processMediaFiles(user.id, interaction.id, processedMessage);
 
-      // Step 7: Send acknowledgment response
+      // Step 7: Create memory from interaction
+      const memory = await this.createMemoryFromInteraction(user.id, interaction.id, processedMessage, mediaFiles);
+
+      // Step 8: Send acknowledgment response
       await twilioService().sendWhatsAppMessage(
         processedMessage.from,
-        `✅ Memory saved! I've stored your ${processedMessage.messageType.toLowerCase()} message. You can search for it later.`
+        `✅ Memory saved! I've stored your ${processedMessage.messageType.toLowerCase()} message${mediaFiles.length > 0 ? ` with ${mediaFiles.length} media file${mediaFiles.length > 1 ? 's' : ''}` : ''}. You can search for it later.`
       );
 
       logger.info('Webhook processed successfully', {
@@ -74,6 +86,7 @@ export class WebhookController {
         memoryId: memory.id,
         messageSid: processedMessage.messageSid,
         messageType: processedMessage.messageType,
+        mediaCount: mediaFiles.length,
       });
 
       return res.status(200).json({
@@ -84,6 +97,7 @@ export class WebhookController {
         interactionId: interaction.id,
         memoryId: memory.id,
         messageType: processedMessage.messageType,
+        mediaCount: mediaFiles.length,
         processingStatus: 'completed',
       });
 
@@ -165,12 +179,54 @@ export class WebhookController {
   }
 
   /**
+   * Process media files with deduplication
+   */
+  private static async processMediaFiles(
+    userId: string,
+    interactionId: string,
+    processedMessage: any
+  ) {
+    const mediaFiles: any[] = [];
+
+    for (const mediaFile of processedMessage.mediaFiles) {
+      try {
+        // Download and store media with deduplication
+        const storedMedia = await MediaService.downloadAndStoreMedia(
+          userId,
+          mediaFile.url,
+          mediaFile.contentType,
+          `media_${mediaFile.mediaSid}`,
+          interactionId
+        );
+
+        mediaFiles.push(storedMedia);
+
+        logger.info('Processed media file with deduplication', {
+          mediaId: storedMedia.id,
+          fingerprint: storedMedia.fingerprint.substring(0, 8) + '...',
+          isReference: storedMedia.metadata?.['isReference'] || false,
+        });
+
+      } catch (error) {
+        logger.error('Error processing media file', {
+          mediaUrl: mediaFile.url,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        // Continue processing other media files
+      }
+    }
+
+    return mediaFiles;
+  }
+
+  /**
    * Create memory from interaction
    */
   private static async createMemoryFromInteraction(
     userId: string,
     interactionId: string,
-    processedMessage: any
+    processedMessage: any,
+    mediaFiles: any[] = []
   ) {
     // Determine content based on message type
     let content = processedMessage.body || '';
@@ -183,26 +239,26 @@ export class WebhookController {
         break;
       case 'IMAGE':
         content = processedMessage.body || 'Image message';
-        if (processedMessage.mediaFiles.length > 0) {
-          content += ` [Media: ${processedMessage.mediaFiles[0].url}]`;
+        if (mediaFiles.length > 0) {
+          content += ` [Media: ${mediaFiles.length} image${mediaFiles.length > 1 ? 's' : ''}]`;
         }
         break;
       case 'AUDIO':
         content = processedMessage.body || 'Audio message';
-        if (processedMessage.mediaFiles.length > 0) {
-          content += ` [Audio: ${processedMessage.mediaFiles[0].url}]`;
+        if (mediaFiles.length > 0) {
+          content += ` [Audio: ${mediaFiles.length} audio file${mediaFiles.length > 1 ? 's' : ''}]`;
         }
         break;
       case 'VIDEO':
         content = processedMessage.body || 'Video message';
-        if (processedMessage.mediaFiles.length > 0) {
-          content += ` [Video: ${processedMessage.mediaFiles[0].url}]`;
+        if (mediaFiles.length > 0) {
+          content += ` [Video: ${mediaFiles.length} video file${mediaFiles.length > 1 ? 's' : ''}]`;
         }
         break;
       case 'DOCUMENT':
         content = processedMessage.body || 'Document message';
-        if (processedMessage.mediaFiles.length > 0) {
-          content += ` [Document: ${processedMessage.mediaFiles[0].url}]`;
+        if (mediaFiles.length > 0) {
+          content += ` [Document: ${mediaFiles.length} document${mediaFiles.length > 1 ? 's' : ''}]`;
         }
         break;
       default:
@@ -216,8 +272,21 @@ export class WebhookController {
       interactionId,
       content,
       memoryType,
-      processedMessage.mediaFiles.map((f: any) => f.url)
+      mediaFiles.map(f => f.s3Url)
     );
+
+    // Link media files to memory
+    if (mediaFiles.length > 0) {
+      const db = getDatabase();
+      await db.mediaFile.updateMany({
+        where: {
+          id: { in: mediaFiles.map(f => f.id) },
+        },
+        data: {
+          memoryId: memory.id,
+        },
+      });
+    }
 
     return memory;
   }
