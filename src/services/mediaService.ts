@@ -328,7 +328,7 @@ export class MediaService {
       db.mediaFile.count({
         where: {
           metadata: {
-            path: ['isReference'],
+            path: 'isReference',
             equals: false,
           },
         },

@@ -47,16 +47,20 @@ export class AnalyticsController {
       // Get top tags (if any memories have tags)
       const memoriesWithTags = await db.memory.findMany({
         where: {
-          tags: { isEmpty: false },
+          tags: { not: "null" },
         },
         select: { tags: true },
       });
 
       const tagCounts: Record<string, number> = {};
       memoriesWithTags.forEach(memory => {
-        memory.tags.forEach(tag => {
-          tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-        });
+        if (memory.tags && Array.isArray(memory.tags)) {
+          memory.tags.forEach((tag: any) => {
+            if (typeof tag === 'string') {
+              tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            }
+          });
+        }
       });
 
       const topTags = Object.entries(tagCounts)

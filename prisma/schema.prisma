@@ -7,7 +7,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -65,7 +65,7 @@ model Memory {
   content       String   // The memory content
   mem0Id        String?  // Mem0 memory ID
   memoryType    MemoryType
-  tags          String[] // Array of tags for categorization
+  tags          Json     // Array of tags for categorization stored as JSON
   importance    Int      @default(1) // 1-10 scale
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

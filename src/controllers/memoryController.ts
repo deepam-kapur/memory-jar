@@ -105,7 +105,6 @@ export class MemoryController {
       const whereConditions: any = {
         content: {
           contains: query as string,
-          mode: 'insensitive',
         },
       };
 

@@ -21,6 +21,10 @@ export const whatsAppWebhookSchema = z.object({
   From: z.string(),
   To: z.string(),
   Body: z.string().optional(),
+  NumMedia: z.coerce.number().int().min(0).max(10).optional(),
+  AccountSid: z.string().optional(),
+  ApiVersion: z.string().optional(),
+  Timestamp: z.string().optional(),
   MediaUrl0: z.string().url().optional(),
   MediaUrl1: z.string().url().optional(),
   MediaUrl2: z.string().url().optional(),
@@ -41,7 +45,16 @@ export const whatsAppWebhookSchema = z.object({
   MediaContentType7: z.string().optional(),
   MediaContentType8: z.string().optional(),
   MediaContentType9: z.string().optional(),
-  NumMedia: z.coerce.number().int().min(0).max(10).optional(),
+  MediaSid0: z.string().optional(),
+  MediaSid1: z.string().optional(),
+  MediaSid2: z.string().optional(),
+  MediaSid3: z.string().optional(),
+  MediaSid4: z.string().optional(),
+  MediaSid5: z.string().optional(),
+  MediaSid6: z.string().optional(),
+  MediaSid7: z.string().optional(),
+  MediaSid8: z.string().optional(),
+  MediaSid9: z.string().optional(),
   RecordingUrl: z.string().url().optional(),
   RecordingDuration: z.coerce.number().int().min(0).optional(),
   RecordingSid: z.string().optional(),
@@ -52,7 +65,7 @@ export const whatsAppWebhookSchema = z.object({
   DisplayName: z.string().optional(),
   ProfileName: z.string().optional(),
   WaId: z.string().optional(),
-});
+}).passthrough(); // Allow additional fields for testing
 
 // Memory schemas for WhatsApp Memory Assistant
 export const createMemorySchema = z.object({
