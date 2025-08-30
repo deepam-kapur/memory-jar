@@ -1,0 +1,165 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model - represents WhatsApp users
+model User {
+  id          String   @id @default(cuid())
+  phoneNumber String   @unique
+  name        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isActive    Boolean  @default(true)
+
+  // Relations
+  interactions Interaction[]
+  memories     Memory[]
+  mediaFiles   MediaFile[]
+
+  // Indexes
+  @@index([phoneNumber])
+  @@index([createdAt])
+  @@map("users")
+}
+
+// Interaction model - represents WhatsApp interactions
+model Interaction {
+  id          String   @id @default(cuid())
+  userId      String
+  messageType MessageType
+  content     String?  // Text content or description
+  timestamp   DateTime @default(now())
+  direction   Direction
+  status      InteractionStatus @default(PENDING)
+  metadata    Json?    // Additional data like message ID, etc.
+
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memories    Memory[]
+  mediaFiles  MediaFile[]
+
+  // Indexes
+  @@index([userId])
+  @@index([timestamp])
+  @@index([messageType])
+  @@index([direction])
+  @@index([status])
+  @@map("interactions")
+}
+
+// Memory model - represents semantic memories stored in Mem0
+model Memory {
+  id            String   @id @default(cuid())
+  userId        String
+  interactionId String?
+  content       String   // The memory content
+  mem0Id        String?  // Mem0 memory ID
+  memoryType    MemoryType
+  tags          String[] // Array of tags for categorization
+  importance    Int      @default(1) // 1-10 scale
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastAccessed  DateTime @default(now())
+  accessCount   Int      @default(0)
+
+  // Relations
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interaction Interaction? @relation(fields: [interactionId], references: [id], onDelete: SetNull)
+  mediaFiles  MediaFile[]
+
+  // Indexes
+  @@index([userId])
+  @@index([mem0Id])
+  @@index([memoryType])
+  @@index([tags])
+  @@index([importance])
+  @@index([createdAt])
+  @@index([lastAccessed])
+  @@map("memories")
+}
+
+// MediaFile model - represents uploaded media files
+model MediaFile {
+  id            String   @id @default(cuid())
+  userId        String
+  interactionId String?
+  memoryId      String?
+  fileName      String
+  originalName  String
+  fileType      String   // MIME type
+  fileSize      Int      // Size in bytes
+  s3Key         String   // S3 object key
+  s3Url         String   // S3 URL
+  transcription String?  // For audio files
+  metadata      Json?    // Additional file metadata
+  createdAt     DateTime @default(now())
+
+  // Relations
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interaction Interaction? @relation(fields: [interactionId], references: [id], onDelete: SetNull)
+  memory      Memory?     @relation(fields: [memoryId], references: [id], onDelete: SetNull)
+
+  // Indexes
+  @@index([userId])
+  @@index([fileType])
+  @@index([createdAt])
+  @@index([s3Key])
+  @@map("media_files")
+}
+
+// Analytics model - for tracking usage and performance
+model Analytics {
+  id        String   @id @default(cuid())
+  userId    String?
+  eventType String   // e.g., "memory_created", "memory_retrieved", "file_uploaded"
+  eventData Json?    // Additional event data
+  timestamp DateTime @default(now())
+  ipAddress String?
+  userAgent String?
+
+  // Indexes
+  @@index([userId])
+  @@index([eventType])
+  @@index([timestamp])
+  @@map("analytics")
+}
+
+// Enums
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  LOCATION
+  CONTACT
+}
+
+enum Direction {
+  INBOUND   // Message from user to system
+  OUTBOUND  // Message from system to user
+}
+
+enum InteractionStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum MemoryType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  MIXED
+}

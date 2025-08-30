@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { env, isDevelopment } from './config/environment';
+import { initializeDatabase, closeDatabase } from './services/database';
 
 // Import routes (will be created later)
 import healthRoutes from './routes/health';
@@ -81,8 +82,12 @@ app.use((error: Error, _req: express.Request, res: express.Response) => {
 const gracefulShutdown = (signal: string) => {
   console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
   
-  server.close(() => {
+  server.close(async () => {
     console.log('✅ HTTP server closed');
+    
+    // Close database connection
+    await closeDatabase();
+    
     process.exit(0);
   });
 
@@ -94,9 +99,22 @@ const gracefulShutdown = (signal: string) => {
 };
 
 // Start server
-const server = app.listen(env.PORT, env.HOST, () => {
+const server = app.listen(env.PORT, env.HOST, async () => {
+  // Initialize database
+  try {
+    initializeDatabase();
+    // eslint-disable-next-line no-console
+    console.log('✅ Database initialized');
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('❌ Failed to initialize database:', error);
+  }
+
+  // eslint-disable-next-line no-console
   console.log(`🚀 Memory Jar server running on http://${env.HOST}:${env.PORT}`);
+  // eslint-disable-next-line no-console
   console.log(`📊 Environment: ${env.NODE_ENV}`);
+  // eslint-disable-next-line no-console
   console.log(`🔧 Node version: ${process.version}`);
 });
 
