@@ -140,3 +140,5 @@ vite.config.ts.timestamp-*
 
 context/
 /src/generated/prisma
+flows/
+dev.db
