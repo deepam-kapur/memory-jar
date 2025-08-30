@@ -41,12 +41,15 @@ export const errorHandler = (
     // Handle Zod validation errors
     const details: Record<string, string[]> = {};
     
-    (error as any).errors.forEach((err: any) => {
-      const field = err.path.join('.');
+    // Handle both old and new Zod error structures
+    const errors = (error as any).errors || error.issues || [];
+    
+    errors.forEach((err: any) => {
+      const field = err.path ? err.path.join('.') : err.path || 'unknown';
       if (!details[field]) {
         details[field] = [];
       }
-      details[field].push(err.message);
+      details[field].push(err.message || 'Validation failed');
     });
 
     appError = new ValidationError('Validation failed', details, ErrorCodes.INVALID_INPUT);
@@ -143,7 +146,7 @@ export const errorHandler = (
 // 404 handler for unmatched routes
 export const notFoundHandler = (req: Request, _res: Response, next: NextFunction) => {
   const error = new NotFoundError(
-    `Route ${req.originalUrl} not found`,
+    'Not Found',
     ErrorCodes.RESOURCE_NOT_FOUND
   );
   next(error);

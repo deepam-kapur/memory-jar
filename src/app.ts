@@ -13,8 +13,10 @@ import { errorHandler, notFoundHandler, timeoutHandler } from './middleware/erro
 
 // Import routes
 import healthRoutes from './routes/health';
-import userRoutes from './routes/users';
+import webhookRoutes from './routes/webhook';
 import memoryRoutes from './routes/memories';
+import interactionRoutes from './routes/interactions';
+import analyticsRoutes from './routes/analytics';
 
 // Create Express application
 const app = express();
@@ -63,21 +65,27 @@ app.use(sanitize);
 app.use(suspiciousActivityLimiter);
 
 // Routes
-app.use('/health', healthRoutes);
-app.use('/users', userRoutes);
-app.use('/memories', memoryRoutes);
+  app.use('/health', healthRoutes);
+  app.use('/webhook', webhookRoutes);
+  app.use('/memories', memoryRoutes);
+  app.use('/interactions', interactionRoutes);
+  app.use('/analytics', analyticsRoutes);
 
 // Root endpoint
 app.get('/', (_req, res) => {
   res.json({
-    message: 'Memory Jar API',
+    message: 'WhatsApp Memory Assistant API',
     version: '1.0.0',
     environment: env.NODE_ENV,
     timestamp: new Date().toISOString(),
+    description: 'WhatsApp chatbot using Twilio and Mem0 for memory management',
     endpoints: {
       health: '/health',
-      users: '/users',
-      memories: '/memories',
+      webhook: '/webhook (POST) - Twilio WhatsApp webhook',
+      memories: '/memories (POST/GET) - Multimodal memory management',
+      memoriesList: '/memories/list (GET) - List all memories from DB',
+      interactions: '/interactions/recent (GET) - Recent interactions',
+      analytics: '/analytics/summary (GET) - Database analytics',
     },
   });
 });
