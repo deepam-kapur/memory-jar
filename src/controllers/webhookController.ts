@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { twilioService, type TwilioWebhookPayload } from '../services/twilioService';
 import { getDatabase } from '../services/database';
 import { getMultimodalService } from '../services/multimodalService';
+import { getTimezoneService } from '../services/timezoneService';
 import logger from '../config/logger';
 
 export class WebhookController {
@@ -33,7 +34,7 @@ export class WebhookController {
         mediaCount: processedMessage.mediaFiles.length,
       });
 
-      // Step 3: Get or create user
+      // Step 3: Get or create user with timezone detection
       const userId = await WebhookController.getOrCreateUser(processedMessage.from);
 
       // Step 4: Check for idempotency
@@ -48,33 +49,37 @@ export class WebhookController {
         return res.status(200).json({
           success: true,
           message: 'Webhook already processed',
+          messageSid: processedMessage.messageSid,
+          userId,
+          interactionId: existingInteraction.id,
+          processingStatus: 'already_processed',
           response,
         });
       }
 
       // Step 5: Determine if this is a query or new memory
-      const isQuery = WebhookController.isQueryMessage(processedMessage.body || '');
-      
-      if (isQuery) {
-        // Handle as query - acknowledge and create memory
-        const response = WebhookController.generateWhatsAppResponse('🔍 Query processing will be implemented in the next phase. For now, I\'ve saved your message as a memory.');
-        
-        await WebhookController.handleNewMemory(userId, processedMessage);
-        
+      if (WebhookController.isQueryMessage(processedMessage.body)) {
+        const queryResponse = await WebhookController.handleQuery(userId, processedMessage.body || '');
         return res.status(200).json({
           success: true,
           message: 'Query processed successfully',
-          response,
-        });
-      } else {
-        // Handle as new memory
-        const response = await WebhookController.handleNewMemory(userId, processedMessage);
-        return res.status(200).json({
-          success: true,
-          message: 'Memory created successfully',
-          response,
+          messageSid: processedMessage.messageSid,
+          userId,
+          processingStatus: 'query_processed',
+          response: queryResponse,
         });
       }
+
+      // Step 6: Handle as new memory
+      const memoryResponse = await WebhookController.handleNewMemory(userId, processedMessage);
+      return res.status(200).json({
+        success: true,
+        message: 'Webhook processed successfully',
+        messageSid: processedMessage.messageSid,
+        userId,
+        processingStatus: 'completed',
+        response: memoryResponse,
+      });
 
     } catch (error) {
       logger.error('Error processing webhook', { 
@@ -95,24 +100,43 @@ export class WebhookController {
   }
 
   /**
-   * Get or create user from WhatsApp number
+   * Get or create user from WhatsApp number with timezone detection
    */
   private static async getOrCreateUser(whatsappNumber: string): Promise<string> {
     const db = getDatabase();
+    const timezoneService = getTimezoneService();
     
     // Remove 'whatsapp:' prefix if present
-    const cleanPhoneNumber = whatsappNumber.replace('whatsapp:', '');
+    const cleanPhoneNumber = whatsappNumber.replace('whatsapp:', '').trim();
     
-    const user = await db.user.upsert({
-      where: { phoneNumber: cleanPhoneNumber },
-      update: {},
-      create: {
-        phoneNumber: cleanPhoneNumber,
-        name: `User ${cleanPhoneNumber.slice(-4)}`,
-      },
-    });
+    // Detect timezone from phone number using timezone service
+    const detectedTimezone = timezoneService.detectTimezoneFromPhoneNumber(cleanPhoneNumber);
+    
+    try {
+      logger.info('Attempting to create/find user', { cleanPhoneNumber, detectedTimezone });
+      
+      const user = await db.user.upsert({
+        where: { phoneNumber: cleanPhoneNumber },
+        update: {
+          timezone: detectedTimezone, // Update timezone if user exists
+        },
+        create: {
+          phoneNumber: cleanPhoneNumber,
+          name: `User ${cleanPhoneNumber.slice(-4)}`,
+          timezone: detectedTimezone,
+        },
+      });
 
-    return user.id;
+      logger.info('User created/found successfully', { userId: user.id, phoneNumber: user.phoneNumber, timezone: user.timezone });
+      return user.id;
+    } catch (error) {
+      logger.error('Error creating user', { 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        cleanPhoneNumber 
+      });
+      throw error;
+    }
   }
 
   /**
@@ -127,7 +151,7 @@ export class WebhookController {
   }
 
   /**
-   * Determine if message is a query
+   * Determine if message is a query with enhanced detection
    */
   private static isQueryMessage(body?: string): boolean {
     if (!body) return false;
@@ -137,15 +161,114 @@ export class WebhookController {
     // Check for /list command
     if (lowerBody === '/list') return true;
     
-    // Check for natural language queries
+    // Check for natural language queries including time-based queries
     const queryKeywords = [
       'show me', 'find', 'search', 'what', 'when', 'where', 'how',
       'my memories', 'my photos', 'my voice notes', 'my audio',
       'from yesterday', 'from today', 'from last week', 'from this week',
-      'about dinner', 'about work', 'about travel', 'about meeting'
+      'about dinner', 'about work', 'about travel', 'about meeting',
+      'last week', 'yesterday', 'today', 'this week', 'this month',
+      'last month', 'last year', 'this year', 'recent', 'old',
+      'mood', 'happy', 'sad', 'excited', 'worried', 'location', 'where'
     ];
     
     return queryKeywords.some(keyword => lowerBody.includes(keyword));
+  }
+
+  /**
+   * Handle query with timezone-aware processing
+   */
+  private static async handleQuery(userId: string, query: string): Promise<any> {
+    logger.info('Processing query', { userId, query });
+
+    // Check if it's a /list command
+    if (query.toLowerCase().trim() === '/list') {
+      return await WebhookController.handleListCommand(userId);
+    }
+
+    // Handle natural language query with timezone awareness
+    return await WebhookController.handleNaturalLanguageQuery(userId, query);
+  }
+
+  /**
+   * Handle /list command using database directly
+   */
+  private static async handleListCommand(userId: string): Promise<any> {
+    const db = getDatabase();
+    
+    // Get memories directly from database
+    const memories = await db.memory.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 15,
+      include: {
+        user: {
+          select: {
+            id: true,
+            phoneNumber: true,
+            name: true,
+          },
+        },
+        interaction: {
+          select: {
+            id: true,
+            messageType: true,
+            content: true,
+          },
+        },
+      },
+    });
+    
+    // Format for WhatsApp
+    return await WebhookController.formatListResponseForWhatsApp(memories);
+  }
+
+  /**
+   * Handle natural language query with timezone awareness
+   */
+  private static async handleNaturalLanguageQuery(userId: string, query: string): Promise<any> {
+    const timezoneService = getTimezoneService();
+    const db = getDatabase();
+    
+    // Parse time-based queries
+    const timeFilter = await timezoneService.parseTimeQuery(query, userId);
+    
+    // Build search conditions
+    const whereConditions: any = { userId };
+    
+    // Add time-based filtering if present
+    if (timeFilter.startDate) {
+      whereConditions.createdAt = {
+        gte: timeFilter.startDate,
+        ...(timeFilter.endDate && { lte: timeFilter.endDate })
+      };
+    }
+    
+    // Search memories from database
+    const memories = await db.memory.findMany({
+      where: whereConditions,
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      include: {
+        user: {
+          select: {
+            id: true,
+            phoneNumber: true,
+            name: true,
+          },
+        },
+        interaction: {
+          select: {
+            id: true,
+            messageType: true,
+            content: true,
+          },
+        },
+      },
+    });
+    
+    // Format for WhatsApp
+    return await WebhookController.formatSearchResponseForWhatsApp(memories, query);
   }
 
   /**
@@ -155,19 +278,19 @@ export class WebhookController {
     logger.info('Processing new memory', { userId, messageType: processedMessage.messageType });
 
     // Create interaction record
-    const interaction = await this.createInteraction(userId, processedMessage);
+    const interaction = await WebhookController.createInteraction(userId, processedMessage);
 
     // Process media files if present
     let mediaFiles: any[] = [];
     if (processedMessage.mediaFiles.length > 0) {
-      mediaFiles = await this.processMediaFiles(userId, interaction.id, processedMessage);
+      mediaFiles = await WebhookController.processMediaFiles(userId, interaction.id, processedMessage);
     }
 
     // Create memory using multimodal service
-    const memory = await this.createMemoryFromInteraction(userId, interaction.id, processedMessage, mediaFiles);
+    await WebhookController.createMemoryFromInteraction(userId, interaction.id, processedMessage, mediaFiles);
 
     // Generate WhatsApp response
-    return this.generateMemorySavedResponse(processedMessage, memory);
+    return WebhookController.generateMemorySavedResponse(processedMessage);
   }
 
   /**
@@ -231,8 +354,8 @@ export class WebhookController {
     const multimodalService = getMultimodalService();
     
     // Determine content based on message type
-    const content = processedMessage.body || this.getDefaultContent(processedMessage.messageType);
-    const memoryType = this.mapMessageTypeToMemoryType(processedMessage.messageType);
+    const content = processedMessage.body || WebhookController.getDefaultContent(processedMessage.messageType);
+    const memoryType = WebhookController.mapMessageTypeToMemoryType(processedMessage.messageType);
 
     // Create memory using multimodal service
     const mem0Id = await multimodalService.processMultimodalContent({
@@ -241,7 +364,7 @@ export class WebhookController {
       content,
       memoryType,
       mediaFiles,
-              tags: [],
+      tags: [],
       importance: 1,
     });
 
@@ -297,7 +420,7 @@ export class WebhookController {
   /**
    * Generate memory saved response
    */
-  private static generateMemorySavedResponse(processedMessage: any, _memory: any): any {
+  private static generateMemorySavedResponse(processedMessage: any): any {
     const messageType = processedMessage.messageType;
     const hasMedia = processedMessage.mediaFiles.length > 0;
 
@@ -308,7 +431,7 @@ export class WebhookController {
       const hasMore = processedMessage.body && processedMessage.body.length > 50;
       content += `📝 *Text Message:*\n"${preview}${hasMore ? '...' : ''}"\n`;
     } else if (hasMedia) {
-      const mediaType = this.getMediaTypeEmoji(messageType);
+      const mediaType = WebhookController.getMediaTypeEmoji(messageType);
       content += `${mediaType} *${messageType.charAt(0) + messageType.slice(1).toLowerCase()} Message:*\n`;
       
       if (processedMessage.body) {
@@ -317,7 +440,7 @@ export class WebhookController {
       
       content += `📎 ${processedMessage.mediaFiles.length} media file${processedMessage.mediaFiles.length > 1 ? 's' : ''} attached\n`;
     } else {
-      const mediaType = this.getMediaTypeEmoji(messageType);
+      const mediaType = WebhookController.getMediaTypeEmoji(messageType);
       content += `${mediaType} *${messageType.charAt(0) + messageType.slice(1).toLowerCase()} Message:*\n`;
     }
 
@@ -353,6 +476,126 @@ export class WebhookController {
       case 'VIDEO': return '🎬';
       case 'DOCUMENT': return '📄';
       default: return '📱';
+    }
+  }
+
+  /**
+   * Format list response for WhatsApp
+   */
+  private static async formatListResponseForWhatsApp(memories: any[]): Promise<any> {
+    if (!memories || memories.length === 0) {
+      return WebhookController.generateWhatsAppResponse(
+        '📝 *No memories found*\n\nStart by sending me a message, photo, or voice note!'
+      );
+    }
+
+    let content = `📚 *Your Memories (${memories.length})*\n\n`;
+    
+    // Group memories by date
+    const groupedMemories = WebhookController.groupMemoriesByDate(memories);
+    
+    for (const [date, dayMemories] of Object.entries(groupedMemories)) {
+      content += `📅 *${date}*\n`;
+      
+      for (const memory of dayMemories) {
+        const emoji = WebhookController.getMemoryTypeEmoji(memory.memoryType);
+        const preview = memory.content.length > 50 
+          ? memory.content.substring(0, 50) + '...' 
+          : memory.content;
+        
+        content += `${emoji} ${preview}\n`;
+      }
+      content += '\n';
+    }
+
+    content += '💡 *Try asking:*\n';
+    content += '• "Show me memories from yesterday"\n';
+    content += '• "Find my photos from last week"\n';
+    content += '• "What did I say about dinner?"';
+
+    return {
+      type: 'text',
+      content,
+    };
+  }
+
+  /**
+   * Format search response for WhatsApp
+   */
+  private static async formatSearchResponseForWhatsApp(memories: any[], query: string): Promise<any> {
+    if (!memories || memories.length === 0) {
+      return WebhookController.generateWhatsAppResponse(
+        `🔍 *No memories found for "${query}"*\n\nTry:\n• Different keywords\n• Time-based queries like "yesterday"\n• Use /list to see all memories`
+      );
+    }
+
+    let content = `🔍 *Found ${memories.length} memory${memories.length > 1 ? 'ies' : ''} for "${query}"*\n\n`;
+    
+    for (let i = 0; i < Math.min(memories.length, 5); i++) {
+      const memory = memories[i];
+      const emoji = WebhookController.getMemoryTypeEmoji(memory.memoryType);
+      const date = new Date(memory.createdAt).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      
+      const preview = memory.content.length > 60 
+        ? memory.content.substring(0, 60) + '...' 
+        : memory.content;
+      
+      content += `${i + 1}. ${emoji} *${date}*\n`;
+      content += `   ${preview}\n\n`;
+    }
+
+    if (memories.length > 5) {
+      content += `... and ${memories.length - 5} more memories\n\n`;
+    }
+
+    content += '💡 *Try:*\n';
+    content += '• "Show me more"\n';
+    content += '• "From yesterday"\n';
+    content += '• Use /list for all memories';
+
+    return {
+      type: 'text',
+      content,
+    };
+  }
+
+  /**
+   * Group memories by date
+   */
+  private static groupMemoriesByDate(memories: any[]): Record<string, any[]> {
+    const grouped: Record<string, any[]> = {};
+    
+    for (const memory of memories) {
+      const date = new Date(memory.createdAt).toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric'
+      });
+      
+      if (!grouped[date]) {
+        grouped[date] = [];
+      }
+      grouped[date].push(memory);
+    }
+    
+    return grouped;
+  }
+
+  /**
+   * Get emoji for memory type
+   */
+  private static getMemoryTypeEmoji(memoryType: string): string {
+    switch (memoryType) {
+      case 'IMAGE': return '🖼️';
+      case 'AUDIO': return '🎵';
+      case 'VIDEO': return '🎬';
+      case 'MIXED': return '📎';
+      default: return '📝';
     }
   }
 }

@@ -74,10 +74,15 @@ const sanitizeObject = (obj: any): any => {
   for (const [key, value] of Object.entries(obj)) {
     if (typeof value === 'string') {
       // Remove null bytes and other potentially dangerous characters
+      // Also remove script tags and other XSS vectors
       sanitized[key] = value
         .replace(/\0/g, '') // Remove null bytes
         // eslint-disable-next-line no-control-regex
         .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove control characters
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') // Remove script tags
+        .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '') // Remove iframe tags
+        .replace(/javascript:/gi, '') // Remove javascript: protocol
+        .replace(/on\w+\s*=/gi, '') // Remove event handlers
         .trim();
     } else if (typeof value === 'object' && value !== null) {
       sanitized[key] = sanitizeObject(value);
