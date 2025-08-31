@@ -1,6 +1,8 @@
 import express from 'express';
 import { env } from '../config/environment';
 import { checkDatabaseHealth, getDatabaseStats } from '../services/database';
+import { getMem0Service } from '../services/mem0Service';
+import { getOpenAIService } from '../services/openaiService';
 
 const router = express.Router();
 
@@ -18,9 +20,12 @@ router.get('/', (_req, res) => {
 // Detailed health check
 router.get('/detailed', async (_req, res) => {
   try {
-    const [dbHealth, dbStats] = await Promise.all([
+    // Check all service health
+    const [dbHealth, dbStats, mem0Health, openaiHealth] = await Promise.allSettled([
       checkDatabaseHealth(),
       getDatabaseStats(),
+      getMem0Service().healthCheck(),
+      getOpenAIService().healthCheck(),
     ]);
 
     const healthData = {
@@ -41,14 +46,16 @@ router.get('/detailed', async (_req, res) => {
         cpu: process.cpuUsage(),
       },
       services: {
-        database: dbHealth.status,
-        mem0: 'unknown', // Will be updated when Mem0 is implemented
-        twilio: 'unknown', // Will be updated when Twilio is implemented
+        database: dbHealth.status === 'fulfilled' ? dbHealth.value.status : 'unhealthy',
+        mem0: mem0Health.status === 'fulfilled' ? mem0Health.value.status : 'unhealthy',
+        openai: openaiHealth.status === 'fulfilled' ? openaiHealth.value.status : 'unhealthy',
       },
       database: {
-        health: dbHealth,
-        stats: dbStats,
+        health: dbHealth.status === 'fulfilled' ? dbHealth.value : { status: 'unhealthy', message: 'Service unavailable' },
+        stats: dbStats.status === 'fulfilled' ? dbStats.value : null,
       },
+      mem0: mem0Health.status === 'fulfilled' ? mem0Health.value : { status: 'unhealthy', message: 'Service unavailable' },
+      openai: openaiHealth.status === 'fulfilled' ? openaiHealth.value : { status: 'unhealthy', message: 'Service unavailable' },
     };
 
     res.status(200).json(healthData);
@@ -64,17 +71,27 @@ router.get('/detailed', async (_req, res) => {
 // Readiness check (for Kubernetes)
 router.get('/ready', async (_req, res) => {
   try {
-    // Check database health
-    const dbHealth = await checkDatabaseHealth();
+    // Check all critical service health
+    const [dbHealth, mem0Health, openaiHealth] = await Promise.allSettled([
+      checkDatabaseHealth(),
+      getMem0Service().healthCheck(),
+      getOpenAIService().healthCheck(),
+    ]);
     
-    const isReady = dbHealth.status === 'healthy';
+    const isDbHealthy = dbHealth.status === 'fulfilled' && dbHealth.value.status === 'healthy';
+    const isMem0Healthy = mem0Health.status === 'fulfilled' && mem0Health.value.status === 'healthy';
+    const isOpenAIHealthy = openaiHealth.status === 'fulfilled' && openaiHealth.value.status === 'healthy';
+    
+    const isReady = isDbHealthy && isMem0Healthy && isOpenAIHealthy;
     
     if (isReady) {
       res.status(200).json({
         status: 'ready',
         timestamp: new Date().toISOString(),
         services: {
-          database: dbHealth.status,
+          database: isDbHealthy ? 'healthy' : 'unhealthy',
+          mem0: isMem0Healthy ? 'healthy' : 'unhealthy',
+          openai: isOpenAIHealthy ? 'healthy' : 'unhealthy',
         },
       });
     } else {
@@ -82,9 +99,11 @@ router.get('/ready', async (_req, res) => {
         status: 'not ready',
         timestamp: new Date().toISOString(),
         services: {
-          database: dbHealth.status,
+          database: isDbHealthy ? 'healthy' : 'unhealthy',
+          mem0: isMem0Healthy ? 'healthy' : 'unhealthy',
+          openai: isOpenAIHealthy ? 'healthy' : 'unhealthy',
         },
-        reason: 'Database is not healthy',
+        reason: 'One or more critical services are not healthy',
       });
     }
   } catch (error) {

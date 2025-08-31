@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
+import { getMem0Service } from '../services/mem0Service';
 import { NotFoundError, BadRequestError, ErrorCodes } from '../utils/errors';
 import logger from '../config/logger';
 
@@ -37,8 +38,22 @@ export class MemoryController {
         }
       }
 
-      // Create memory with Mem0 placeholder (will be implemented in Phase 3)
-      const mem0Id = `mem0_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      // Create memory in Mem0 first
+      const mem0Service = getMem0Service();
+      const mem0Id = await mem0Service.createMemory({
+        content: {
+          text: content,
+          metadata: {
+            mediaUrls: mediaUrls || [],
+            transcript,
+          },
+        },
+        userId,
+        interactionId,
+        memoryType,
+        tags,
+        importance,
+      });
 
       const memory = await db.memory.create({
         data: {
@@ -48,7 +63,7 @@ export class MemoryController {
           memoryType,
           tags: tags || [],
           importance: importance || 1,
-          mem0Id, // Placeholder for Mem0 integration
+          mem0Id,
         },
         include: {
           user: {
@@ -93,18 +108,29 @@ export class MemoryController {
   }
 
   /**
-   * Search memories via text search (placeholder for Mem0 semantic search)
+   * Search memories using Mem0 for semantic search
    * GET /memories?query=<text>
    */
   static async searchMemories(req: Request, res: Response) {
     try {
       const { query, page = 1, limit = 20, userId, memoryType, tags, minImportance, maxImportance } = req.query;
       const db = getDatabase();
+      const mem0Service = getMem0Service();
 
-      // Build search conditions
+      // Search memories using Mem0 for semantic search
+      const mem0Results = await mem0Service.searchMemories(
+        query as string,
+        userId as string,
+        Number(limit) * 2 // Get more results to filter
+      );
+
+      // Extract memory IDs from Mem0 results
+      const memoryIds = mem0Results.map(result => result.id);
+
+      // Build where conditions for database filtering
       const whereConditions: any = {
-        content: {
-          contains: query as string,
+        mem0Id: {
+          in: memoryIds,
         },
       };
 
@@ -129,7 +155,7 @@ export class MemoryController {
         if (maxImportance) whereConditions.importance.lte = Number(maxImportance);
       }
 
-      // Perform search
+      // Get memories from database with Mem0 IDs
       const memories = await db.memory.findMany({
         where: whereConditions,
         skip: (Number(page) - 1) * Number(limit),
@@ -168,9 +194,10 @@ export class MemoryController {
         });
       }
 
-      logger.info('Memories searched', {
+      logger.info('Memories searched with Mem0', {
         query,
         resultsCount: memories.length,
+        mem0ResultsCount: mem0Results.length,
         total,
         filters: { userId, memoryType, tags, minImportance, maxImportance },
         requestId: req.id,
@@ -190,6 +217,7 @@ export class MemoryController {
           query,
           resultsCount: memories.length,
           filters: { userId, memoryType, tags, minImportance, maxImportance },
+          semanticSearch: true,
         },
       });
 
@@ -271,7 +299,7 @@ export class MemoryController {
   }
 
   /**
-   * Create memory from interaction (called by webhook)
+   * Create memory from interaction with Mem0 integration (called by webhook)
    * This method is used internally by the webhook controller
    */
   static async createMemoryFromInteraction(
@@ -282,8 +310,24 @@ export class MemoryController {
     mediaUrls?: string[]
   ) {
     const db = getDatabase();
+    const mem0Service = getMem0Service();
 
-    // Create memory from interaction
+    // Create memory in Mem0 first
+    const mem0Id = await mem0Service.createMemory({
+      content: {
+        text: content,
+        metadata: {
+          mediaUrls: mediaUrls || [],
+        },
+      },
+      userId,
+      interactionId,
+      memoryType: memoryType as any,
+      tags: [], // Will be enhanced with AI tagging in Phase 3
+      importance: 1, // Default importance, will be enhanced in Phase 3
+    });
+
+    // Create memory in database with Mem0 ID
     const memory = await db.memory.create({
       data: {
         userId,
@@ -292,7 +336,7 @@ export class MemoryController {
         memoryType: memoryType as any,
         tags: [], // Will be enhanced with AI tagging in Phase 3
         importance: 1, // Default importance, will be enhanced in Phase 3
-        mem0Id: `mem0_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        mem0Id,
       },
     });
 
@@ -302,8 +346,9 @@ export class MemoryController {
       data: { status: 'PROCESSED' },
     });
 
-    logger.info('Memory created from interaction', {
+    logger.info('Memory created from interaction with Mem0', {
       memoryId: memory.id,
+      mem0Id,
       interactionId,
       userId,
       memoryType,
