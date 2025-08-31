@@ -7,8 +7,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./prisma/dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // User model - represents WhatsApp users
@@ -104,8 +104,8 @@ model MediaFile {
   originalName  String
   fileType      String   // MIME type
   fileSize      Int      // Size in bytes
-  s3Key         String   // S3 object key
-  s3Url         String   // S3 URL
+  storageKey    String   // Storage object key (S3/local)
+  storageUrl    String   // Storage URL
   fingerprint   String   @unique // SHA-256 hash for deduplication
   transcription String?  // For audio files
   metadata      Json?    // Additional file metadata
@@ -120,7 +120,8 @@ model MediaFile {
   @@index([userId])
   @@index([fileType])
   @@index([createdAt])
-  @@index([s3Key])
+  @@index([storageKey])
+  @@index([fingerprint])
   @@map("media_files")
 }
 

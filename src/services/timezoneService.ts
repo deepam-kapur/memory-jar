@@ -1,5 +1,7 @@
 import { getDatabase } from './database';
 import logger from '../config/logger';
+import { zonedTimeToUtc, utcToZonedTime, format } from 'date-fns-tz';
+import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths } from 'date-fns';
 
 export interface TimeFilter {
   startDate?: Date;
@@ -11,17 +13,26 @@ export class TimezoneService {
   private db = getDatabase();
 
   /**
-   * Detect timezone from phone number (simplified implementation)
+   * Detect timezone from phone number (enhanced implementation)
    */
   detectTimezoneFromPhoneNumber(phoneNumber: string): string {
-    // Simplified timezone detection based on phone number patterns
+    // Enhanced timezone detection based on phone number patterns
     // In production, this would use IP geolocation or user preferences
     
     const cleanNumber = phoneNumber.replace(/\D/g, '');
     
     // US/Canada numbers
     if (cleanNumber.startsWith('1') && cleanNumber.length === 11) {
-      return 'America/New_York';
+      // More specific US timezone detection based on area codes
+      const areaCode = cleanNumber.substring(1, 4);
+      if (['212', '646', '917', '347', '929'].includes(areaCode)) {
+        return 'America/New_York'; // NYC
+      } else if (['213', '323', '424', '747', '818'].includes(areaCode)) {
+        return 'America/Los_Angeles'; // LA
+      } else if (['312', '773', '872'].includes(areaCode)) {
+        return 'America/Chicago'; // Chicago
+      }
+      return 'America/New_York'; // Default US Eastern
     }
     
     // UK numbers
@@ -34,83 +45,124 @@ export class TimezoneService {
       return 'Asia/Kolkata';
     }
     
+    // Australian numbers
+    if (cleanNumber.startsWith('61')) {
+      return 'Australia/Sydney';
+    }
+    
+    // German numbers
+    if (cleanNumber.startsWith('49')) {
+      return 'Europe/Berlin';
+    }
+    
+    // French numbers
+    if (cleanNumber.startsWith('33')) {
+      return 'Europe/Paris';
+    }
+    
+    // Japanese numbers
+    if (cleanNumber.startsWith('81')) {
+      return 'Asia/Tokyo';
+    }
+    
     // Default to UTC
     return 'UTC';
   }
 
   /**
-   * Parse time-based queries and return date filters
+   * Update user timezone
+   */
+  async updateUserTimezone(userId: string, timezone: string): Promise<void> {
+    try {
+      await this.db.user.update({
+        where: { id: userId },
+        data: { timezone },
+      });
+      
+      logger.info('User timezone updated', { userId, timezone });
+    } catch (error) {
+      logger.error('Error updating user timezone', { userId, timezone, error });
+      throw error;
+    }
+  }
+
+  /**
+   * Parse time-based queries and return date filters with proper timezone handling
    */
   async parseTimeQuery(query: string, userId: string): Promise<TimeFilter> {
     const lowerQuery = query.toLowerCase();
-    const now = new Date();
-    
-    // Get user's timezone
     const userTimezone = await this.getUserTimezone(userId);
     
+    // Get current time in user's timezone
+    const nowInUserTz = utcToZonedTime(new Date(), userTimezone);
+    
     if (lowerQuery.includes('yesterday')) {
-      const yesterday = new Date(now);
-      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterday = subDays(nowInUserTz, 1);
       return {
-        startDate: this.startOfDay(yesterday, userTimezone),
-        endDate: this.endOfDay(yesterday, userTimezone),
+        startDate: zonedTimeToUtc(startOfDay(yesterday), userTimezone),
+        endDate: zonedTimeToUtc(endOfDay(yesterday), userTimezone),
         relativeTime: 'yesterday'
       };
     }
     
     if (lowerQuery.includes('today')) {
       return {
-        startDate: this.startOfDay(now, userTimezone),
-        endDate: this.endOfDay(now, userTimezone),
+        startDate: zonedTimeToUtc(startOfDay(nowInUserTz), userTimezone),
+        endDate: zonedTimeToUtc(endOfDay(nowInUserTz), userTimezone),
         relativeTime: 'today'
       };
     }
     
     if (lowerQuery.includes('last week')) {
-      const lastWeekStart = new Date(now);
-      lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+      const lastWeekStart = subWeeks(nowInUserTz, 1);
       return {
-        startDate: this.startOfDay(lastWeekStart, userTimezone),
-        endDate: this.endOfDay(now, userTimezone),
+        startDate: zonedTimeToUtc(startOfWeek(lastWeekStart), userTimezone),
+        endDate: zonedTimeToUtc(endOfWeek(lastWeekStart), userTimezone),
         relativeTime: 'last week'
       };
     }
     
     if (lowerQuery.includes('this week')) {
-      const weekStart = this.startOfWeek(now, userTimezone);
       return {
-        startDate: weekStart,
-        endDate: this.endOfDay(now, userTimezone),
+        startDate: zonedTimeToUtc(startOfWeek(nowInUserTz), userTimezone),
+        endDate: zonedTimeToUtc(endOfDay(nowInUserTz), userTimezone),
         relativeTime: 'this week'
       };
     }
     
     if (lowerQuery.includes('last month')) {
-      const lastMonth = new Date(now);
-      lastMonth.setMonth(lastMonth.getMonth() - 1);
+      const lastMonth = subMonths(nowInUserTz, 1);
       return {
-        startDate: this.startOfMonth(lastMonth, userTimezone),
-        endDate: this.endOfMonth(lastMonth, userTimezone),
+        startDate: zonedTimeToUtc(startOfMonth(lastMonth), userTimezone),
+        endDate: zonedTimeToUtc(endOfMonth(lastMonth), userTimezone),
         relativeTime: 'last month'
       };
     }
     
     if (lowerQuery.includes('this month')) {
       return {
-        startDate: this.startOfMonth(now, userTimezone),
-        endDate: this.endOfDay(now, userTimezone),
+        startDate: zonedTimeToUtc(startOfMonth(nowInUserTz), userTimezone),
+        endDate: zonedTimeToUtc(endOfDay(nowInUserTz), userTimezone),
         relativeTime: 'this month'
       };
     }
     
-    if (lowerQuery.includes('recent') || lowerQuery.includes('old')) {
-      const recentDays = lowerQuery.includes('recent') ? 7 : 30;
-      const startDate = new Date(now);
-      startDate.setDate(startDate.getDate() - recentDays);
+    if (lowerQuery.includes('recent')) {
+      const recentStart = subDays(nowInUserTz, 7);
       return {
-        startDate: this.startOfDay(startDate, userTimezone),
-        endDate: this.endOfDay(now, userTimezone),
-        relativeTime: lowerQuery.includes('recent') ? 'recent' : 'old'
+        startDate: zonedTimeToUtc(startOfDay(recentStart), userTimezone),
+        endDate: zonedTimeToUtc(endOfDay(nowInUserTz), userTimezone),
+        relativeTime: 'recent'
+      };
+    }
+    
+    if (lowerQuery.includes('old')) {
+      const oldStart = subDays(nowInUserTz, 30);
+      const oldEnd = subDays(nowInUserTz, 7);
+      return {
+        startDate: zonedTimeToUtc(startOfDay(oldStart), userTimezone),
+        endDate: zonedTimeToUtc(endOfDay(oldEnd), userTimezone),
+        relativeTime: 'old'
       };
     }
     
@@ -137,54 +189,15 @@ export class TimezoneService {
   }
 
   /**
-   * Get start of day in user's timezone
+   * Validate timezone string
    */
-  private startOfDay(date: Date, timezone: string): Date {
-    const result = new Date(date);
-    result.setHours(0, 0, 0, 0);
-    return result;
-  }
-
-  /**
-   * Get end of day in user's timezone
-   */
-  private endOfDay(date: Date, timezone: string): Date {
-    const result = new Date(date);
-    result.setHours(23, 59, 59, 999);
-    return result;
-  }
-
-  /**
-   * Get start of week in user's timezone
-   */
-  private startOfWeek(date: Date, timezone: string): Date {
-    const result = new Date(date);
-    const day = result.getDay();
-    const diff = result.getDate() - day;
-    result.setDate(diff);
-    result.setHours(0, 0, 0, 0);
-    return result;
-  }
-
-  /**
-   * Get start of month in user's timezone
-   */
-  private startOfMonth(date: Date, timezone: string): Date {
-    const result = new Date(date);
-    result.setDate(1);
-    result.setHours(0, 0, 0, 0);
-    return result;
-  }
-
-  /**
-   * Get end of month in user's timezone
-   */
-  private endOfMonth(date: Date, timezone: string): Date {
-    const result = new Date(date);
-    result.setMonth(result.getMonth() + 1);
-    result.setDate(0);
-    result.setHours(23, 59, 59, 999);
-    return result;
+  isValidTimezone(timezone: string): boolean {
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: timezone });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -192,14 +205,7 @@ export class TimezoneService {
    */
   async formatDateForUser(date: Date, userId: string): Promise<string> {
     const userTimezone = await this.getUserTimezone(userId);
-    return date.toLocaleDateString('en-US', {
-      timeZone: userTimezone,
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    return format(utcToZonedTime(date, userTimezone), 'MMM dd, yyyy HH:mm', { timeZone: userTimezone });
   }
 
   /**
@@ -207,8 +213,36 @@ export class TimezoneService {
    */
   async convertToUserTimezone(date: Date, userId: string): Promise<Date> {
     const userTimezone = await this.getUserTimezone(userId);
-    // Simple conversion - in production would use proper timezone library
-    return date;
+    return utcToZonedTime(date, userTimezone);
+  }
+
+  /**
+   * Convert user timezone date to UTC
+   */
+  async convertFromUserTimezone(date: Date, userId: string): Promise<Date> {
+    const userTimezone = await this.getUserTimezone(userId);
+    return zonedTimeToUtc(date, userTimezone);
+  }
+
+  /**
+   * Get timezone offset for user
+   */
+  async getUserTimezoneOffset(userId: string): Promise<number> {
+    const userTimezone = await this.getUserTimezone(userId);
+    const now = new Date();
+    const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const userTime = new Date(utcTime + (this.getTimezoneOffsetMinutes(userTimezone) * 60000));
+    return userTime.getTimezoneOffset();
+  }
+
+  /**
+   * Get timezone offset in minutes
+   */
+  private getTimezoneOffsetMinutes(timezone: string): number {
+    const now = new Date();
+    const utc = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
+    const local = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+    return (local.getTime() - utc.getTime()) / (1000 * 60);
   }
 }
 

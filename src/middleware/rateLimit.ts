@@ -1,5 +1,6 @@
 import rateLimit from 'express-rate-limit';
 import { env } from '../config/environment';
+import { Request, Response, NextFunction } from 'express';
 
 // General API rate limiter
 export const apiLimiter = rateLimit({
@@ -161,3 +162,75 @@ export const suspiciousActivityLimiter = rateLimit({
            req.ip === 'localhost';
   },
 });
+
+// Per-user rate limiting using in-memory store
+const userRateLimitStore = new Map<string, { count: number; resetTime: number }>();
+
+// Clean up expired entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of userRateLimitStore.entries()) {
+    if (now > value.resetTime) {
+      userRateLimitStore.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// Per-user rate limiter middleware
+export const createUserRateLimiter = (maxRequests: number, windowMs: number) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    // Extract user identifier from request
+    const userId = req.body?.userId || req.query?.userId || req.params?.userId;
+    const phoneNumber = req.body?.From?.replace('whatsapp:', '') || req.headers['x-user-phone'];
+    
+    const userKey = userId || phoneNumber || req.ip;
+    const now = Date.now();
+    
+    // Get or create user rate limit entry
+    let userLimit = userRateLimitStore.get(userKey);
+    
+    if (!userLimit || now > userLimit.resetTime) {
+      // Reset or create new entry
+      userLimit = {
+        count: 1,
+        resetTime: now + windowMs
+      };
+      userRateLimitStore.set(userKey, userLimit);
+      return next();
+    }
+    
+    // Check if user has exceeded limit
+    if (userLimit.count >= maxRequests) {
+      const retryAfter = Math.ceil((userLimit.resetTime - now) / 1000);
+      
+      res.set('Retry-After', retryAfter.toString());
+      res.set('X-RateLimit-Limit', maxRequests.toString());
+      res.set('X-RateLimit-Remaining', '0');
+      res.set('X-RateLimit-Reset', userLimit.resetTime.toString());
+      
+      return res.status(429).json({
+        error: 'User rate limit exceeded',
+        message: `Too many requests from user. Please try again in ${retryAfter} seconds.`,
+        code: 'USER_RATE_LIMIT_EXCEEDED',
+        retryAfter,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    
+    // Increment counter
+    userLimit.count++;
+    userRateLimitStore.set(userKey, userLimit);
+    
+    // Set rate limit headers
+    res.set('X-RateLimit-Limit', maxRequests.toString());
+    res.set('X-RateLimit-Remaining', (maxRequests - userLimit.count).toString());
+    res.set('X-RateLimit-Reset', userLimit.resetTime.toString());
+    
+    next();
+  };
+};
+
+// User-specific rate limiters
+export const userApiLimiter = createUserRateLimiter(50, 15 * 60 * 1000); // 50 requests per 15 minutes per user
+export const userSearchLimiter = createUserRateLimiter(20, 60 * 1000); // 20 searches per minute per user
+export const userMemoryLimiter = createUserRateLimiter(30, 60 * 1000); // 30 memory operations per minute per user

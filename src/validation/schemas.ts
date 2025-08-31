@@ -105,8 +105,8 @@ export const createMediaFileSchema = z.object({
   originalName: z.string().min(1).max(255),
   fileType: z.string().min(1).max(100),
   fileSize: z.number().int().min(1),
-  s3Key: z.string().min(1).max(500),
-  s3Url: z.string().url(),
+  storageKey: z.string().min(1).max(500),
+  storageUrl: z.string().url(),
   transcription: z.string().optional(),
   metadata: z.record(z.string(), z.any()).optional(),
 });

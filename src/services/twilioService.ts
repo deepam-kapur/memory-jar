@@ -41,6 +41,7 @@ export class TwilioService {
   private accountSid: string;
   private authToken: string;
   private whatsappNumber: string;
+  private client: any = null;
 
   constructor() {
     this.accountSid = env.TWILIO_ACCOUNT_SID || '';
@@ -51,6 +52,23 @@ export class TwilioService {
       logger.warn('Twilio credentials not provided, media download will be mocked');
     } else {
       logger.info('Twilio service initialized with credentials');
+      this.initializeTwilioClient();
+    }
+  }
+
+  /**
+   * Initialize Twilio client
+   */
+  private async initializeTwilioClient(): Promise<void> {
+    try {
+      const twilio = await import('twilio');
+      this.client = twilio.default(this.accountSid, this.authToken);
+      logger.info('Twilio client initialized successfully');
+    } catch (error) {
+      logger.error('Failed to initialize Twilio client', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      this.client = null;
     }
   }
 
@@ -152,6 +170,8 @@ export class TwilioService {
       // Use real Twilio API if credentials are available
       if (this.accountSid && this.authToken) {
         try {
+          const { default: fetch } = await import('node-fetch');
+          
           const response = await fetch(mediaUrl, {
             headers: {
               'Authorization': `Basic ${Buffer.from(`${this.accountSid}:${this.authToken}`).toString('base64')}`,
@@ -225,39 +245,91 @@ export class TwilioService {
   }
 
   /**
-   * Send WhatsApp message (for responses)
+   * Send WhatsApp message (real implementation)
    */
   async sendWhatsAppMessage(to: string, body: string, mediaUrl?: string): Promise<void> {
     try {
-      // This would typically use Twilio's API to send messages
-      // For now, we'll log the message that would be sent
-      logger.info('WhatsApp message would be sent', {
-        to,
-        body,
-        mediaUrl,
-        timestamp: new Date().toISOString(),
-      });
+      // Use real Twilio API if client is available
+      if (this.client) {
+        try {
+          const messageData: any = {
+            body,
+            from: this.whatsappNumber,
+            to,
+          };
 
-      // In a real implementation, you would use Twilio's API:
-      // const client = require('twilio')(this.accountSid, this.authToken);
-      // await client.messages.create({
-      //   body,
-      //   from: this.whatsappNumber,
-      //   to,
-      //   mediaUrl: mediaUrl ? [mediaUrl] : undefined,
-      // });
+          if (mediaUrl) {
+            messageData.mediaUrl = [mediaUrl];
+          }
+
+          const message = await this.client.messages.create(messageData);
+
+          logger.info('WhatsApp message sent successfully', {
+            messageSid: message.sid,
+            to,
+            body: body.substring(0, 100) + (body.length > 100 ? '...' : ''),
+            mediaUrl,
+            status: message.status,
+          });
+
+          return;
+        } catch (apiError) {
+          logger.error('Twilio API message sending failed', {
+            error: apiError instanceof Error ? apiError.message : 'Unknown error',
+            to,
+            body: body.substring(0, 100),
+            mediaUrl,
+          });
+          throw new BadRequestError(
+            `Failed to send WhatsApp message: ${apiError instanceof Error ? apiError.message : 'Unknown error'}`,
+            ErrorCodes.TWILIO_ERROR
+          );
+        }
+      }
+
+      // Fallback to mock sending if no client
+      if (!this.accountSid || !this.authToken) {
+        logger.warn('Twilio credentials not configured, message not sent', {
+          to,
+          body: body.substring(0, 100) + (body.length > 100 ? '...' : ''),
+          mediaUrl,
+        });
+        return;
+      }
+
+      throw new Error('Twilio client not initialized');
 
     } catch (error) {
       logger.error('Error sending WhatsApp message', {
         error: error instanceof Error ? error.message : 'Unknown error',
         to,
-        body,
+        body: body.substring(0, 100),
         mediaUrl,
       });
       throw new BadRequestError(
         `Failed to send WhatsApp message: ${error instanceof Error ? error.message : 'Unknown error'}`,
         ErrorCodes.TWILIO_ERROR
       );
+    }
+  }
+
+  /**
+   * Send multiple WhatsApp messages (for longer responses)
+   */
+  async sendMultipleWhatsAppMessages(to: string, messages: string[]): Promise<void> {
+    try {
+      for (const message of messages) {
+        await this.sendWhatsAppMessage(to, message);
+        // Add small delay between messages to avoid rate limiting
+        await this.delay(1000);
+      }
+    } catch (error) {
+      logger.error('Error sending multiple WhatsApp messages', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        to,
+        messageCount: messages.length,
+      });
+      throw error;
     }
   }
 
@@ -269,6 +341,8 @@ export class TwilioService {
       if (this.accountSid && this.authToken) {
         try {
           // Test API connectivity by making a simple request
+          const { default: fetch } = await import('node-fetch');
+          
           const testUrl = `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}`;
           const response = await fetch(testUrl, {
             headers: {
@@ -283,6 +357,7 @@ export class TwilioService {
                 message: 'Twilio API is responding correctly',
                 accountSid: this.accountSid,
                 apiConnected: true,
+                clientInitialized: !!this.client,
               },
             };
           } else {
@@ -295,6 +370,7 @@ export class TwilioService {
               message: 'Twilio API not available, using mock implementation',
               apiConnected: false,
               error: apiError instanceof Error ? apiError.message : 'Unknown error',
+              clientInitialized: !!this.client,
             },
           };
         }
@@ -307,6 +383,7 @@ export class TwilioService {
           message: 'Mock Twilio service is working',
           apiConnected: false,
           accountSid: this.accountSid || 'mock',
+          clientInitialized: !!this.client,
         },
       };
 
@@ -357,6 +434,11 @@ export class TwilioService {
     // Generate a mock buffer based on the URL
     const mockData = `Mock media content for URL: ${mediaUrl}`;
     return Buffer.from(mockData, 'utf8');
+  }
+
+  // Utility method for delay
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
 import { getTwilioService } from '../services/twilioService';
 import { getMultimodalService } from '../services/multimodalService';
+import { getTimezoneService } from '../services/timezoneService';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
 
@@ -10,6 +11,7 @@ export const handleIncomingMessage = async (req: Request, res: Response) => {
     const db = getDatabase();
     const twilioService = getTwilioService();
     const multimodalService = getMultimodalService();
+    const timezoneService = getTimezoneService();
 
     // Process the webhook payload
     const payload = twilioService.processWebhookPayload(req.body);
@@ -24,8 +26,8 @@ export const handleIncomingMessage = async (req: Request, res: Response) => {
     // Extract phone number from WhatsApp format
     const phoneNumber = payload.From.replace('whatsapp:', '');
     
-    // Get or create user
-    const user = await getOrCreateUser(db, phoneNumber);
+    // Get or create user with timezone detection
+    const user = await getOrCreateUser(db, phoneNumber, timezoneService);
     
     // Check for idempotency (prevent duplicate processing)
     const existingInteraction = await checkIdempotency(db, payload.MessageSid);
@@ -151,7 +153,7 @@ export const handleIncomingMessage = async (req: Request, res: Response) => {
 };
 
 // Helper functions
-async function getOrCreateUser(db: any, phoneNumber: string) {
+async function getOrCreateUser(db: any, phoneNumber: string, timezoneService: any) {
   try {
     // Try to find existing user
     let user = await db.user.findUnique({
@@ -159,18 +161,35 @@ async function getOrCreateUser(db: any, phoneNumber: string) {
     });
 
     if (!user) {
-      // Create new user
+      // Detect timezone from phone number
+      const detectedTimezone = timezoneService.detectTimezoneFromPhoneNumber(phoneNumber);
+      
+      // Create new user with detected timezone
       user = await db.user.create({
         data: {
           phoneNumber,
-          timezone: 'UTC', // Default timezone, can be updated later
+          timezone: detectedTimezone,
         },
       });
 
-      logger.info('Created new user', {
+      logger.info('Created new user with detected timezone', {
         userId: user.id,
         phoneNumber,
+        timezone: detectedTimezone,
       });
+    } else if (user.timezone === 'UTC') {
+      // Update existing user with detected timezone if still using default
+      const detectedTimezone = timezoneService.detectTimezoneFromPhoneNumber(phoneNumber);
+      if (detectedTimezone !== 'UTC') {
+        await timezoneService.updateUserTimezone(user.id, detectedTimezone);
+        user.timezone = detectedTimezone;
+        
+        logger.info('Updated user timezone from default', {
+          userId: user.id,
+          phoneNumber,
+          newTimezone: detectedTimezone,
+        });
+      }
     }
 
     return user;

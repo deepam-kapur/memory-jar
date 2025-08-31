@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { z, ZodError } from 'zod';
-import { ValidationError } from '../utils/errors';
+import { ValidationError, UnauthorizedError } from '../utils/errors';
+import crypto from 'crypto';
+import { env } from '../config/environment';
 
 // Validation middleware factory
 export const validate = (schema: z.ZodSchema, location: 'body' | 'query' | 'params' = 'body') => {
@@ -186,6 +188,90 @@ export const validateCuid = (req: Request, _res: Response, next: NextFunction) =
       }
     }
   }
+  
+  next();
+};
+
+// Twilio webhook signature validation
+export const validateTwilioSignature = (req: Request, _res: Response, next: NextFunction) => {
+  const twilioSignature = req.headers['x-twilio-signature'] as string;
+  
+  if (!twilioSignature) {
+    return next(new UnauthorizedError('Missing Twilio signature', 'MISSING_SIGNATURE'));
+  }
+  
+  // Get the raw body for signature validation
+  const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+  const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  
+  // Create the expected signature
+  const expectedSignature = crypto
+    .createHmac('sha1', env.TWILIO_AUTH_TOKEN)
+    .update(url + rawBody)
+    .digest('base64');
+  
+  const expectedSignatureHeader = `sha1=${expectedSignature}`;
+  
+  // Compare signatures using timing-safe comparison
+  if (!crypto.timingSafeEqual(
+    Buffer.from(twilioSignature),
+    Buffer.from(expectedSignatureHeader)
+  )) {
+    return next(new UnauthorizedError('Invalid Twilio signature', 'INVALID_SIGNATURE'));
+  }
+  
+  next();
+};
+
+// API key validation middleware
+export const validateApiKey = (req: Request, _res: Response, next: NextFunction) => {
+  const apiKey = req.headers['x-api-key'] as string;
+  const authHeader = req.headers['authorization'] as string;
+  
+  // Check for API key in header or Authorization bearer token
+  let providedKey = apiKey;
+  if (!providedKey && authHeader && authHeader.startsWith('Bearer ')) {
+    providedKey = authHeader.substring(7);
+  }
+  
+  if (!providedKey) {
+    return next(new UnauthorizedError('API key required', 'MISSING_API_KEY'));
+  }
+  
+  // In production, this would validate against a database of API keys
+  // For now, we'll use a simple environment variable
+  const validApiKey = env.API_KEY || 'development-api-key';
+  
+  if (providedKey !== validApiKey) {
+    return next(new UnauthorizedError('Invalid API key', 'INVALID_API_KEY'));
+  }
+  
+  next();
+};
+
+// Content Security Policy validation
+export const validateContentSecurityPolicy = (req: Request, res: Response, next: NextFunction) => {
+  // Set CSP headers
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "media-src 'self'",
+    "object-src 'none'",
+    "frame-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'"
+  ].join('; '));
+  
+  // Additional security headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
   
   next();
 };

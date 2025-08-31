@@ -7,7 +7,7 @@ import { initializeDatabase, closeDatabase } from './services/database';
 
 // Import middleware
 import { requestLogger, errorLogger } from './config/logger';
-import { sanitize } from './middleware/validation';
+import { sanitize, validateContentSecurityPolicy } from './middleware/validation';
 import { suspiciousActivityLimiter } from './middleware/rateLimit';
 import { errorHandler, notFoundHandler, timeoutHandler } from './middleware/errorHandler';
 
@@ -36,10 +36,10 @@ app.use(helmet({
 
 // CORS configuration
 app.use(cors({
-  origin: isDevelopment ? ['http://localhost:3000', 'http://localhost:3001'] : [],
+  origin: isDevelopment ? ['http://localhost:3000', 'http://localhost:3001'] : (env.CORS_ORIGIN ? [env.CORS_ORIGIN] : false),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-API-Key'],
 }));
 
 // Request timeout handler
@@ -61,6 +61,9 @@ app.use((req, _res, next) => {
 
 // Input sanitization
 app.use(sanitize);
+
+// Security headers
+app.use(validateContentSecurityPolicy);
 
 // Rate limiting
 app.use(suspiciousActivityLimiter);

@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { validate } from '../middleware/validation';
+import { validate, validateTwilioSignature } from '../middleware/validation';
 import { whatsAppWebhookSchema } from '../validation/schemas';
 import { handleIncomingMessage } from '../controllers/webhookController';
-import { webhookLimiter } from '../middleware/rateLimit';
+import { webhookLimiter, userApiLimiter } from '../middleware/rateLimit';
 
 const router = Router();
 
@@ -12,6 +12,8 @@ const router = Router();
  */
 router.post('/', 
   webhookLimiter,
+  userApiLimiter,
+  validateTwilioSignature, // Add Twilio signature validation
   validate(whatsAppWebhookSchema),
   handleIncomingMessage
 );
