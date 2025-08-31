@@ -2,10 +2,8 @@ import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
 import { twilioService, type TwilioWebhookPayload } from '../services/twilioService';
 import { MediaService } from '../services/mediaService';
-import { MemoryController } from './memoryController';
+import { getMultimodalService } from '../services/multimodalService';
 import logger from '../config/logger';
-import { BadRequestError, ErrorCodes } from '../utils/errors';
-import { env } from '../config/environment';
 
 export class WebhookController {
   /**
@@ -14,9 +12,6 @@ export class WebhookController {
    */
   static async handleIncomingMessage(req: Request, res: Response) {
     try {
-      // Step 1: Verify webhook signature for security (disabled for testing)
-      const signature = req.headers['x-twilio-signature'] as string;
-      const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
       
       // Temporarily disable signature verification for testing
       logger.debug('Development mode - skipping signature verification');
@@ -213,7 +208,7 @@ export class WebhookController {
   }
 
   /**
-   * Create memory from interaction
+   * Create memory from interaction with multimodal processing
    */
   private static async createMemoryFromInteraction(
     userId: string,
@@ -221,6 +216,8 @@ export class WebhookController {
     processedMessage: any,
     mediaFiles: any[] = []
   ) {
+    const multimodalService = getMultimodalService();
+    
     // Determine content based on message type
     let content = processedMessage.body || '';
     let memoryType = processedMessage.messageType;
@@ -232,45 +229,59 @@ export class WebhookController {
         break;
       case 'IMAGE':
         content = processedMessage.body || 'Image message';
-        if (mediaFiles.length > 0) {
-          content += ` [Media: ${mediaFiles.length} image${mediaFiles.length > 1 ? 's' : ''}]`;
-        }
         break;
       case 'AUDIO':
         content = processedMessage.body || 'Audio message';
-        if (mediaFiles.length > 0) {
-          content += ` [Audio: ${mediaFiles.length} audio file${mediaFiles.length > 1 ? 's' : ''}]`;
-        }
         break;
       case 'VIDEO':
         content = processedMessage.body || 'Video message';
-        if (mediaFiles.length > 0) {
-          content += ` [Video: ${mediaFiles.length} video file${mediaFiles.length > 1 ? 's' : ''}]`;
-        }
         break;
       case 'DOCUMENT':
         content = processedMessage.body || 'Document message';
-        if (mediaFiles.length > 0) {
-          content += ` [Document: ${mediaFiles.length} document${mediaFiles.length > 1 ? 's' : ''}]`;
-        }
         break;
       default:
         content = processedMessage.body || 'Message';
         memoryType = 'TEXT';
     }
 
-    // Create memory using the MemoryController
-    const memory = await MemoryController.createMemoryFromInteraction(
+    // Process media files for multimodal processing
+    const mediaUrls = mediaFiles.map(f => f.s3Url);
+    const mediaTypes = mediaFiles.map(f => f.fileType);
+    
+    const processedMedia = await multimodalService.processTwilioMedia(
+      userId,
+      interactionId,
+      mediaUrls,
+      mediaTypes
+    );
+
+    // Create memory using multimodal service
+    const mem0Id = await multimodalService.processMultimodalContent({
       userId,
       interactionId,
       content,
-      memoryType,
-      mediaFiles.map(f => f.s3Url)
-    );
+      memoryType: memoryType as any,
+      mediaFiles: processedMedia,
+      tags: [], // Will be enhanced with AI tagging in Phase 3
+      importance: 1, // Default importance, will be enhanced in Phase 3
+    });
+
+    // Create memory in database with Mem0 ID
+    const db = getDatabase();
+    const memory = await db.memory.create({
+      data: {
+        userId,
+        interactionId,
+        content,
+        memoryType: memoryType as any,
+        tags: [],
+        importance: 1,
+        mem0Id,
+      },
+    });
 
     // Link media files to memory
     if (mediaFiles.length > 0) {
-      const db = getDatabase();
       await db.mediaFile.updateMany({
         where: {
           id: { in: mediaFiles.map(f => f.id) },
@@ -280,6 +291,21 @@ export class WebhookController {
         },
       });
     }
+
+    // Update interaction status
+    await db.interaction.update({
+      where: { id: interactionId },
+      data: { status: 'PROCESSED' },
+    });
+
+    logger.info('Memory created from interaction with multimodal processing', {
+      memoryId: memory.id,
+      mem0Id,
+      interactionId,
+      userId,
+      memoryType,
+      mediaCount: mediaFiles.length,
+    });
 
     return memory;
   }

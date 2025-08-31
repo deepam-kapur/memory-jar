@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getDatabase } from './database';
+import { getLocalStorageService, StoredFile } from './localStorageService';
 import { Prisma } from '../generated/prisma';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
@@ -98,7 +99,7 @@ export class MediaService {
   }
 
   /**
-   * Store media file with deduplication
+   * Store media file with deduplication using local storage
    */
   static async storeMedia(
     userId: string,
@@ -111,6 +112,7 @@ export class MediaService {
     metadata?: Record<string, any>
   ): Promise<MediaFile> {
     const db = getDatabase();
+    const localStorageService = getLocalStorageService();
 
     // Generate fingerprint
     const fingerprint = this.generateFingerprint(buffer, contentType, originalName);
@@ -128,8 +130,8 @@ export class MediaService {
           originalName,
           fileType: contentType,
           fileSize: existingMedia.fileSize,
-          s3Key: existingMedia.s3Key, // Reference the same S3 key
-          s3Url: existingMedia.s3Url, // Reference the same S3 URL
+          s3Key: existingMedia.s3Key, // Reference the same local path
+          s3Url: existingMedia.s3Url, // Reference the same local URL
           fingerprint: fingerprint.hash, // Same fingerprint
           transcription,
           metadata: {
@@ -174,14 +176,13 @@ export class MediaService {
       return mediaReference;
     }
 
-    // Generate unique filename and S3 key
-    const fileExtension = this.getFileExtension(contentType, originalName);
-    const fileName = `${fingerprint.hash.substring(0, 8)}_${Date.now()}.${fileExtension}`;
-    const s3Key = `media/${userId}/${fileName}`;
-    const s3Url = `https://your-s3-bucket.s3.amazonaws.com/${s3Key}`; // Placeholder
-
-    // TODO: Upload to S3 (will be implemented in Phase 3)
-    // await this.uploadToS3(buffer, s3Key, contentType);
+    // Store file using local storage
+    const storedFile = await localStorageService.storeFile(
+      buffer,
+      originalName,
+      contentType,
+      metadata
+    );
 
     // Store new media file
     const mediaFile = await db.mediaFile.create({
@@ -189,12 +190,12 @@ export class MediaService {
         userId,
         interactionId,
         memoryId,
-        fileName,
+        fileName: storedFile.fileName,
         originalName,
         fileType: contentType,
         fileSize: fingerprint.size,
-        s3Key,
-        s3Url,
+        s3Key: storedFile.filePath, // Use local file path instead of S3 key
+        s3Url: storedFile.fileUrl, // Use local file URL instead of S3 URL
         fingerprint: fingerprint.hash,
         transcription,
         metadata: {
