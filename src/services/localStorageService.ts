@@ -253,6 +253,23 @@ export class LocalStorageService {
   }
 
   /**
+   * Get file path by filename
+   */
+  async getFilePath(filename: string): Promise<string | null> {
+    try {
+      const filePath = path.join(this.storageDir, filename);
+      
+      // Check if file exists
+      await fs.access(filePath);
+      
+      return filePath;
+    } catch {
+      // File doesn't exist
+      return null;
+    }
+  }
+
+  /**
    * Get extension from MIME type
    */
   private getExtensionFromMimeType(mimeType: string): string {

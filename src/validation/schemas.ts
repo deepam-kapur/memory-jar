@@ -67,6 +67,12 @@ export const whatsAppWebhookSchema = z.object({
   WaId: z.string().optional(),
 }).passthrough(); // Allow additional fields for testing
 
+// Query message schema for testing
+export const queryMessageSchema = z.object({
+  userId: z.string().cuid(),
+  query: z.string().min(1).max(500),
+});
+
 // Memory schemas for WhatsApp Memory Assistant
 export const createMemorySchema = z.object({
   userId: z.string().cuid(),
