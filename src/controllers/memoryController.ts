@@ -185,13 +185,17 @@ export class MemoryController {
 
       // Update access count and last accessed for found memories
       if (memories.length > 0) {
-        await db.memory.updateMany({
-          where: { id: { in: memories.map(m => m.id) } },
-          data: {
-            accessCount: { increment: 1 },
-            lastAccessed: new Date(),
-          },
-        });
+        // Use individual updates instead of updateMany for better compatibility
+        const updatePromises = memories.map(memory => 
+          db.memory.update({
+            where: { id: memory.id },
+            data: {
+              accessCount: { increment: 1 },
+              lastAccessed: new Date(),
+            },
+          })
+        );
+        await Promise.all(updatePromises);
       }
 
       logger.info('Memories searched with Mem0', {

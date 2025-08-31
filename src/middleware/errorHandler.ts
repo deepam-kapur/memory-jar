@@ -173,9 +173,11 @@ export const timeoutHandler = (timeoutMs: number = 30000) => {
       }
     }, timeoutMs);
 
-    res.on('finish', () => {
-      clearTimeout(timeout);
-    });
+    if (res.on) {
+      res.on('finish', () => {
+        clearTimeout(timeout);
+      });
+    }
 
     next();
   };

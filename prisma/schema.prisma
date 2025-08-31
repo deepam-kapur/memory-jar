@@ -8,7 +8,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+  url      = "file:./prisma/dev.db"
 }
 
 // User model - represents WhatsApp users
@@ -16,6 +16,7 @@ model User {
   id          String   @id @default(cuid())
   phoneNumber String   @unique
   name        String?
+  timezone    String   @default("UTC")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   isActive    Boolean  @default(true)
@@ -24,6 +25,9 @@ model User {
   interactions Interaction[]
   memories     Memory[]
   mediaFiles   MediaFile[]
+  reminders    Reminder[]
+  sharedFrom   SharedMemory[] @relation("SharedFrom")
+  sharedTo     SharedMemory[] @relation("SharedTo")
 
   // Indexes
   @@index([phoneNumber])
@@ -76,6 +80,8 @@ model Memory {
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   interaction Interaction? @relation(fields: [interactionId], references: [id], onDelete: SetNull)
   mediaFiles  MediaFile[]
+  reminders   Reminder[]
+  sharedMemories SharedMemory[]
 
   // Indexes
   @@index([userId])
@@ -135,6 +141,53 @@ model Analytics {
   @@map("analytics")
 }
 
+// Reminder model - for scheduled memory reminders
+model Reminder {
+  id          String   @id @default(cuid())
+  userId      String
+  memoryId    String
+  scheduledFor DateTime
+  message     String
+  status      ReminderStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memory  Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([userId])
+  @@index([scheduledFor])
+  @@map("reminders")
+}
+
+// SharedMemory model - for memory sharing between users
+model SharedMemory {
+  id          String   @id @default(cuid())
+  memoryId    String
+  fromUserId  String
+  toUserId    String
+  message     String?
+  status      SharedMemoryStatus @default(PENDING)
+  respondedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  memory    Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+  fromUser  User   @relation("SharedFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser    User   @relation("SharedTo", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([memoryId])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@map("shared_memories")
+}
+
+
+
 // Enums
 enum MessageType {
   TEXT
@@ -165,3 +218,17 @@ enum MemoryType {
   VIDEO
   MIXED
 }
+
+enum ReminderStatus {
+  PENDING
+  SENT
+  CANCELLED
+}
+
+enum SharedMemoryStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+

@@ -20,12 +20,18 @@ export class AnalyticsController {
         db.mediaFile.count(),
       ]);
 
-      // Get memories by type
-      const memoriesByType = await db.memory.groupBy({
-        by: ['memoryType'],
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
+      // Get memories by type (manual grouping)
+      const allMemories = await db.memory.findMany({
+        select: { memoryType: true },
       });
+      const typeCounts: Record<string, number> = {};
+      allMemories.forEach(memory => {
+        typeCounts[memory.memoryType] = (typeCounts[memory.memoryType] || 0) + 1;
+      });
+      const memoriesByType = Object.entries(typeCounts).map(([type, count]) => ({
+        type,
+        count,
+      }));
 
       // Get average importance
       const avgImportance = await db.memory.aggregate({
@@ -77,19 +83,28 @@ export class AnalyticsController {
       // Get media deduplication statistics
       const mediaStats = await MediaService.getMediaStats();
 
-      // Get interactions by message type
-      const interactionsByType = await db.interaction.groupBy({
-        by: ['messageType'],
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
+      // Get interactions by message type (manual grouping)
+      const allInteractions = await db.interaction.findMany({
+        select: { messageType: true, status: true },
       });
-
-      // Get interactions by status
-      const interactionsByStatus = await db.interaction.groupBy({
-        by: ['status'],
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
+      
+      const interactionTypeCounts: Record<string, number> = {};
+      const interactionStatusCounts: Record<string, number> = {};
+      
+      allInteractions.forEach(interaction => {
+        interactionTypeCounts[interaction.messageType] = (interactionTypeCounts[interaction.messageType] || 0) + 1;
+        interactionStatusCounts[interaction.status] = (interactionStatusCounts[interaction.status] || 0) + 1;
       });
+      
+      const interactionsByType = Object.entries(interactionTypeCounts).map(([type, count]) => ({
+        type,
+        count,
+      }));
+      
+      const interactionsByStatus = Object.entries(interactionStatusCounts).map(([status, count]) => ({
+        status,
+        count,
+      }));
 
       const analytics = {
         overview: {
@@ -100,18 +115,9 @@ export class AnalyticsController {
           averageImportance: avgImportance._avg.importance || 0,
           recentActivity7Days: recentActivity,
         },
-        memoriesByType: memoriesByType.map(item => ({
-          type: item.memoryType,
-          count: item._count.id,
-        })),
-        interactionsByType: interactionsByType.map(item => ({
-          type: item.messageType,
-          count: item._count.id,
-        })),
-        interactionsByStatus: interactionsByStatus.map(item => ({
-          status: item.status,
-          count: item._count.id,
-        })),
+        memoriesByType,
+        interactionsByType,
+        interactionsByStatus,
         mediaDeduplication: {
           totalFiles: mediaStats.totalFiles,
           uniqueFiles: mediaStats.uniqueFiles,

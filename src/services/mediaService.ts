@@ -324,7 +324,7 @@ export class MediaService {
   }> {
     const db = getDatabase();
 
-    const [totalFiles, uniqueFiles, byType] = await Promise.all([
+    const [totalFiles, uniqueFiles, allMediaFiles] = await Promise.all([
       db.mediaFile.count(),
       db.mediaFile.count({
         where: {
@@ -334,26 +334,27 @@ export class MediaService {
           },
         },
       }),
-      db.mediaFile.groupBy({
-        by: ['fileType'],
-        _count: { id: true },
-        _sum: { fileSize: true },
+      db.mediaFile.findMany({
+        select: { fileType: true, fileSize: true },
       }),
     ]);
 
-    const totalSize = byType.reduce((sum, item) => sum + (item._sum.fileSize || 0), 0);
-    const deduplicationRate = totalFiles > 0 ? ((totalFiles - uniqueFiles) / totalFiles) * 100 : 0;
-
-    const byTypeStats: Record<string, number> = {};
-    byType.forEach(item => {
-      byTypeStats[item.fileType] = item._count.id;
+    // Manual grouping by file type
+    const byTypeCounts: Record<string, number> = {};
+    let totalSize = 0;
+    
+    allMediaFiles.forEach(media => {
+      byTypeCounts[media.fileType] = (byTypeCounts[media.fileType] || 0) + 1;
+      totalSize += media.fileSize || 0;
     });
+
+    const deduplicationRate = totalFiles > 0 ? ((totalFiles - uniqueFiles) / totalFiles) * 100 : 0;
 
     return {
       totalFiles,
       totalSize,
       uniqueFiles,
-      byType: byTypeStats,
+      byType: byTypeCounts,
       deduplicationRate,
     };
   }

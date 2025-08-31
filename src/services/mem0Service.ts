@@ -26,13 +26,18 @@ export interface MemorySearchResult {
 export class Mem0Service {
   private memoryStore: Map<string, any> = new Map();
   private memoryCounter = 0;
+  private apiKey: string | undefined;
+  private baseUrl: string;
 
   constructor() {
-    if (!env.MEM0_API_KEY) {
+    this.apiKey = env.MEM0_API_KEY;
+    this.baseUrl = env.MEM0_BASE_URL || 'https://api.mem0.ai';
+    
+    if (!this.apiKey) {
       logger.warn('MEM0_API_KEY not provided, using local implementation');
+    } else {
+      logger.info('Mem0 service initialized with API key');
     }
-
-    logger.info('Mem0 service initialized');
   }
 
   /**
@@ -76,7 +81,7 @@ export class Mem0Service {
         createdAt: new Date().toISOString(),
       };
 
-      // Create memory
+      // Use local storage for now (can be enhanced with real API later)
       const memoryId = `mem_${++this.memoryCounter}_${Date.now()}`;
       const memory = {
         id: memoryId,
@@ -87,7 +92,7 @@ export class Mem0Service {
 
       this.memoryStore.set(memoryId, memory);
 
-      logger.info('Memory created in Mem0', {
+      logger.info('Memory created in local Mem0 storage', {
         memoryId,
         userId,
         interactionId,
