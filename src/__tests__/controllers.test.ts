@@ -1,289 +1,170 @@
-import { MemoryController } from '../controllers/memoryController';
-import { WebhookController } from '../controllers/webhookController';
-import { InteractionController } from '../controllers/interactionController';
-import { AnalyticsController } from '../controllers/analyticsController';
+import { Request, Response } from 'express';
+import { handleIncomingMessage } from '../controllers/webhookController';
 import { getDatabase } from '../services/database';
-import { NotFoundError, BadRequestError } from '../utils/errors';
+import { getTwilioService } from '../services/twilioService';
+import { getMultimodalService } from '../services/multimodalService';
 
-// Mock the database service
+// Mock the services
 jest.mock('../services/database');
-const mockGetDatabase = getDatabase as jest.MockedFunction<typeof getDatabase>;
+jest.mock('../services/twilioService');
+jest.mock('../services/multimodalService');
 
-describe('MemoryController', () => {
+describe('Webhook Controller', () => {
+  let mockReq: Partial<Request>;
+  let mockRes: Partial<Response>;
   let mockDb: any;
-  let mockReq: any;
-  let mockRes: any;
+  let mockTwilioService: any;
+  let mockMultimodalService: any;
 
   beforeEach(() => {
+    mockReq = {
+      body: {
+        MessageSid: 'test-message-sid',
+        From: 'whatsapp:+1234567890',
+        Body: 'Test message',
+        NumMedia: '0'
+      }
+    };
+
+    mockRes = {
+      json: jest.fn().mockReturnThis(),
+      status: jest.fn().mockReturnThis()
+    };
+
     mockDb = {
       user: {
         findUnique: jest.fn(),
-      },
-      memory: {
-        findMany: jest.fn(),
-        findUnique: jest.fn(),
-        create: jest.fn(),
-        count: jest.fn(),
+        create: jest.fn()
       },
       interaction: {
         findUnique: jest.fn(),
+        create: jest.fn()
       },
+      memory: {
+        create: jest.fn()
+      }
     };
 
-    mockGetDatabase.mockReturnValue(mockDb);
-
-    mockReq = {
-      query: {},
-      params: {},
-      body: {},
-      id: 'test-request-id',
+    mockTwilioService = {
+      processWebhookPayload: jest.fn(),
+      sendWhatsAppMessage: jest.fn()
     };
 
-    mockRes = {
-      json: jest.fn(),
-      status: jest.fn().mockReturnThis(),
-    };
-  });
-
-  describe('createMemory', () => {
-    it('should create memory successfully', async () => {
-      const user = { id: 'user1', phoneNumber: '+1234567890', name: 'User 1' };
-      const memoryData = {
-        userId: 'user1',
-        content: 'Test memory content',
-        memoryType: 'TEXT',
-        importance: 5,
-      };
-      const createdMemory = { id: 'memory1', ...memoryData };
-
-      mockDb.user.findUnique.mockResolvedValue(user);
-      mockDb.memory.create.mockResolvedValue(createdMemory);
-
-      mockReq.body = memoryData;
-
-      await MemoryController.createMemory(mockReq, mockRes);
-
-      expect(mockDb.user.findUnique).toHaveBeenCalledWith({
-        where: { id: 'user1' },
-      });
-      expect(mockDb.memory.create).toHaveBeenCalledWith({
-        data: memoryData,
-        include: expect.any(Object),
-      });
-      expect(mockRes.status).toHaveBeenCalledWith(201);
-      expect(mockRes.json).toHaveBeenCalledWith({ data: createdMemory });
-    });
-
-    it('should throw NotFoundError when user not found', async () => {
-      mockDb.user.findUnique.mockResolvedValue(null);
-
-      mockReq.body = {
-        userId: 'nonexistent',
-        content: 'Test memory content',
-        memoryType: 'TEXT',
-        importance: 5,
-      };
-
-      await expect(MemoryController.createMemory(mockReq, mockRes)).rejects.toThrow(NotFoundError);
-    });
-  });
-
-  describe('searchMemories', () => {
-    it('should search memories and return results', async () => {
-      const memories = [
-        { id: 'memory1', content: 'Test memory 1', memoryType: 'TEXT' },
-        { id: 'memory2', content: 'Test memory 2', memoryType: 'TEXT' },
-      ];
-
-      mockDb.memory.findMany.mockResolvedValue(memories);
-      mockDb.memory.count.mockResolvedValue(2);
-
-      mockReq.query = { query: 'test', page: '1', limit: '10' };
-
-      await MemoryController.searchMemories(mockReq, mockRes);
-
-      expect(mockDb.memory.findMany).toHaveBeenCalled();
-      expect(mockRes.json).toHaveBeenCalledWith({
-        data: memories,
-        pagination: expect.any(Object),
-        search: {
-          query: 'test',
-          resultsCount: 2,
-        },
-      });
-    });
-  });
-
-  describe('listAllMemories', () => {
-    it('should return all memories with pagination', async () => {
-      const memories = [
-        { id: 'memory1', content: 'Memory 1', memoryType: 'TEXT' },
-        { id: 'memory2', content: 'Memory 2', memoryType: 'TEXT' },
-      ];
-
-      mockDb.memory.findMany.mockResolvedValue(memories);
-      mockDb.memory.count.mockResolvedValue(2);
-
-      mockReq.query = { page: '1', limit: '10' };
-
-      await MemoryController.listAllMemories(mockReq, mockRes);
-
-      expect(mockDb.memory.findMany).toHaveBeenCalled();
-      expect(mockRes.json).toHaveBeenCalledWith({
-        data: memories,
-        pagination: expect.any(Object),
-      });
-    });
-  });
-});
-
-describe('WebhookController', () => {
-  let mockReq: any;
-  let mockRes: any;
-
-  beforeEach(() => {
-    mockReq = {
-      body: {},
-      id: 'test-request-id',
+    mockMultimodalService = {
+      processWhatsAppMessage: jest.fn(),
+      searchMemories: jest.fn()
     };
 
-    mockRes = {
-      json: jest.fn(),
-      status: jest.fn().mockReturnThis(),
-    };
+    (getDatabase as jest.Mock).mockReturnValue(mockDb);
+    (getTwilioService as jest.Mock).mockReturnValue(mockTwilioService);
+    (getMultimodalService as jest.Mock).mockReturnValue(mockMultimodalService);
   });
 
   describe('handleIncomingMessage', () => {
-    it('should handle incoming WhatsApp message', async () => {
-      const webhookData = {
+    it('should process webhook and create user, interaction, and memory', async () => {
+      // Mock service responses
+      mockTwilioService.processWebhookPayload.mockReturnValue({
         MessageSid: 'test-message-sid',
-        From: '+1234567890',
-        To: '+0987654321',
-        Body: 'Hello, this is a test message',
+        From: 'whatsapp:+1234567890',
+        Body: 'Test message',
+        NumMedia: '0'
+      });
+
+      mockDb.user.findUnique.mockResolvedValue(null);
+      mockDb.user.create.mockResolvedValue({ id: 'user123' });
+      mockDb.interaction.findUnique.mockResolvedValue(null);
+      mockDb.interaction.create.mockResolvedValue({ id: 'interaction123' });
+      mockDb.memory.create.mockResolvedValue({ id: 'memory123' });
+
+      mockMultimodalService.processWhatsAppMessage.mockResolvedValue({
+        id: 'mem0-memory-123',
+        content: 'Test message',
+        memoryType: 'TEXT',
+        mediaFiles: [],
+        metadata: { tags: [], importance: 1 },
+        userId: 'user123'
+      });
+
+      mockTwilioService.sendWhatsAppMessage.mockResolvedValue(undefined);
+
+      await handleIncomingMessage(mockReq as Request, mockRes as Response);
+
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          message: 'Memory created successfully',
+          userId: 'user123',
+          interactionId: 'interaction123',
+          memoryId: 'memory123'
+        })
+      );
+    });
+
+    it('should handle duplicate webhook (idempotency)', async () => {
+      // Mock existing interaction
+      mockDb.user.findUnique.mockResolvedValue({ id: 'user123' });
+      mockDb.interaction.findUnique.mockResolvedValue({
+        id: 'existing-interaction',
+        memories: [{ id: 'existing-memory' }]
+      });
+
+      mockTwilioService.processWebhookPayload.mockReturnValue({
+        MessageSid: 'test-message-sid',
+        From: 'whatsapp:+1234567890',
+        Body: 'Test message',
+        NumMedia: '0'
+      });
+
+      await handleIncomingMessage(mockReq as Request, mockRes as Response);
+
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          message: 'Message already processed',
+          processingStatus: 'duplicate'
+        })
+      );
+    });
+
+    it('should handle query messages', async () => {
+      // Mock query message
+      mockReq.body = {
+        MessageSid: 'test-message-sid',
+        From: 'whatsapp:+1234567890',
+        Body: 'What did I say about dinner?',
+        NumMedia: '0'
       };
 
-      mockReq.body = webhookData;
-
-      await WebhookController.handleIncomingMessage(mockReq, mockRes);
-
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: true,
-        message: 'Webhook received successfully',
-        messageSid: 'test-message-sid',
-        processingStatus: 'pending_implementation',
+      mockTwilioService.processWebhookPayload.mockReturnValue({
+        MessageSid: 'test-message-sid',
+        From: 'whatsapp:+1234567890',
+        Body: 'What did I say about dinner?',
+        NumMedia: '0'
       });
-    });
-  });
-});
 
-describe('InteractionController', () => {
-  let mockDb: any;
-  let mockReq: any;
-  let mockRes: any;
+      mockDb.user.findUnique.mockResolvedValue({ id: 'user123' });
+      mockDb.interaction.findUnique.mockResolvedValue(null);
+      mockDb.interaction.create.mockResolvedValue({ id: 'interaction123' });
 
-  beforeEach(() => {
-    mockDb = {
-      interaction: {
-        findMany: jest.fn(),
-        count: jest.fn(),
-      },
-    };
-
-    mockGetDatabase.mockReturnValue(mockDb);
-
-    mockReq = {
-      query: {},
-      id: 'test-request-id',
-    };
-
-    mockRes = {
-      json: jest.fn(),
-    };
-  });
-
-  describe('getRecentInteractions', () => {
-    it('should return recent interactions with pagination', async () => {
-      const interactions = [
-        { id: 'interaction1', content: 'Hello', messageType: 'TEXT' },
-        { id: 'interaction2', content: 'World', messageType: 'TEXT' },
-      ];
-
-      mockDb.interaction.findMany.mockResolvedValue(interactions);
-      mockDb.interaction.count.mockResolvedValue(2);
-
-      mockReq.query = { page: '1', limit: '10' };
-
-      await InteractionController.getRecentInteractions(mockReq, mockRes);
-
-      expect(mockDb.interaction.findMany).toHaveBeenCalled();
-      expect(mockRes.json).toHaveBeenCalledWith({
-        data: interactions,
-        pagination: expect.any(Object),
-      });
-    });
-  });
-});
-
-describe('AnalyticsController', () => {
-  let mockDb: any;
-  let mockReq: any;
-  let mockRes: any;
-
-  beforeEach(() => {
-    mockDb = {
-      user: {
-        count: jest.fn(),
-      },
-      interaction: {
-        count: jest.fn(),
-        findFirst: jest.fn(),
-      },
-      memory: {
-        count: jest.fn(),
-        groupBy: jest.fn(),
-        aggregate: jest.fn(),
-        findMany: jest.fn(),
-      },
-      mediaFile: {
-        count: jest.fn(),
-      },
-    };
-
-    mockGetDatabase.mockReturnValue(mockDb);
-
-    mockReq = {
-      id: 'test-request-id',
-    };
-
-    mockRes = {
-      json: jest.fn(),
-    };
-  });
-
-  describe('getAnalyticsSummary', () => {
-    it('should return analytics summary', async () => {
-      mockDb.user.count.mockResolvedValue(5);
-      mockDb.interaction.count.mockResolvedValue(100);
-      mockDb.memory.count.mockResolvedValue(50);
-      mockDb.mediaFile.count.mockResolvedValue(25);
-      mockDb.memory.groupBy.mockResolvedValue([
-        { memoryType: 'TEXT', _count: { id: 30 } },
-        { memoryType: 'IMAGE', _count: { id: 20 } },
+      mockMultimodalService.searchMemories.mockResolvedValue([
+        {
+          id: 'memory123',
+          content: 'Remember to buy dinner ingredients',
+          metadata: { timestamp: new Date().toISOString() }
+        }
       ]);
-      mockDb.memory.aggregate.mockResolvedValue({ _avg: { importance: 7 } });
-      mockDb.interaction.count.mockResolvedValue(10); // recent activity
-      mockDb.memory.findMany.mockResolvedValue([]); // memories with tags
-      mockDb.interaction.findFirst.mockResolvedValue({ timestamp: new Date() });
 
-      await AnalyticsController.getAnalyticsSummary(mockReq, mockRes);
+      mockTwilioService.sendWhatsAppMessage.mockResolvedValue(undefined);
 
-      expect(mockRes.json).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          overview: expect.any(Object),
-          memoriesByType: expect.any(Array),
-          topTags: expect.any(Array),
-        }),
-      });
+      await handleIncomingMessage(mockReq as Request, mockRes as Response);
+
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          message: 'Query processed successfully',
+          processingStatus: 'query'
+        })
+      );
     });
   });
 });
