@@ -136,7 +136,7 @@ export enum ErrorCodes {
   // External service errors
   TWILIO_ERROR = 'TWILIO_ERROR',
   MEM0_ERROR = 'MEM0_ERROR',
-  AWS_S3_ERROR = 'AWS_S3_ERROR',
+  LOCAL_STORAGE_ERROR = 'LOCAL_STORAGE_ERROR',
   OPENAI_ERROR = 'OPENAI_ERROR',
   
   // File errors

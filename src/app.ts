@@ -17,6 +17,7 @@ import webhookRoutes from './routes/webhook';
 import memoryRoutes from './routes/memories';
 import interactionRoutes from './routes/interactions';
 import analyticsRoutes from './routes/analytics';
+import mediaRoutes from './routes/media';
 
 // Create Express application
 const app = express();
@@ -70,6 +71,7 @@ app.use(suspiciousActivityLimiter);
   app.use('/memories', memoryRoutes);
   app.use('/interactions', interactionRoutes);
   app.use('/analytics', analyticsRoutes);
+  app.use('/media', mediaRoutes);
 
 // Root endpoint
 app.get('/', (_req, res) => {

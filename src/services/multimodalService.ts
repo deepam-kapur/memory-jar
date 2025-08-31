@@ -1,6 +1,7 @@
 import { getMem0Service, CreateMemoryOptions } from './mem0Service';
 import { getOpenAIService } from './openaiService';
-import { getMediaService } from './mediaService';
+
+import { getLocalStorageService } from './localStorageService';
 import { getDatabase } from './database';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
@@ -32,7 +33,7 @@ export interface MultimodalMemoryData {
 export class MultimodalService {
   private mem0Service = getMem0Service();
   private openaiService = getOpenAIService();
-  private mediaService = getMediaService();
+  private localStorageService = getLocalStorageService();
   private db = getDatabase();
 
   /**
@@ -52,8 +53,8 @@ export class MultimodalService {
 
       // Create memory content based on type
       let memoryContent = data.content;
-      let mediaUrls: string[] = [];
-      let metadata: Record<string, any> = {};
+      const mediaUrls: string[] = [];
+      const metadata: Record<string, any> = {};
 
       // Process based on memory type
       switch (data.memoryType) {
@@ -183,69 +184,75 @@ export class MultimodalService {
   }
 
   /**
-   * Process media files (download, transcribe, fingerprint)
+   * Process media files (download, transcribe, fingerprint) using local storage
    */
   private async processMediaFiles(mediaFiles: ProcessedMedia[]): Promise<ProcessedMedia[]> {
     const processedFiles: ProcessedMedia[] = [];
 
     for (const media of mediaFiles) {
       try {
-        // Download and fingerprint media
-        const fingerprint = await this.mediaService.generateFingerprint(media.url);
+        // Download file from URL and store locally
+        const storedFile = await this.localStorageService.storeFileFromUrl(
+          media.url,
+          `media_${Date.now()}`,
+          this.getFileTypeFromUrl(media.url),
+          media.metadata
+        );
         
-        // Check for duplicates
-        const existingMedia = await this.mediaService.findMediaByFingerprint(fingerprint);
+        // Check for duplicates using fingerprint
+        const existingMedia = await this.mediaService.findExistingMedia(storedFile.fingerprint);
         if (existingMedia) {
           logger.info('Media duplicate found', {
             originalUrl: media.url,
             existingUrl: existingMedia.s3Url,
-            fingerprint,
+            fingerprint: storedFile.fingerprint,
           });
           processedFiles.push({
             ...media,
-            fingerprint,
-            url: existingMedia.s3Url || media.url,
+            fingerprint: storedFile.fingerprint,
+            url: existingMedia.s3Url || storedFile.fileUrl,
           });
           continue;
         }
 
         // Process based on media type
-        let processedMedia: ProcessedMedia = {
+        const processedMedia: ProcessedMedia = {
           ...media,
-          fingerprint,
+          fingerprint: storedFile.fingerprint,
+          url: storedFile.fileUrl,
         };
 
         // Transcribe audio files
         if (media.type === 'audio') {
           try {
-            const transcription = await this.openaiService.transcribeAudioFromUrl(media.url);
+            const transcription = await this.openaiService.transcribeAudioFromUrl(storedFile.fileUrl);
             processedMedia.transcription = transcription;
             logger.info('Audio transcription completed', {
-              url: media.url,
+              url: storedFile.fileUrl,
               textLength: transcription.text.length,
               language: transcription.language,
             });
           } catch (transcriptionError) {
             logger.warn('Audio transcription failed', {
-              url: media.url,
+              url: storedFile.fileUrl,
               error: transcriptionError instanceof Error ? transcriptionError.message : 'Unknown error',
             });
             // Continue without transcription
           }
         }
 
-        // Store media metadata
+        // Store media metadata in database
         await this.mediaService.storeMediaMetadata({
           userId: '', // Will be set by caller
           interactionId: '', // Will be set by caller
           memoryId: '', // Will be set by caller
-          fileName: `media_${fingerprint}`,
-          originalName: `media_${Date.now()}`,
-          fileType: this.getFileTypeFromUrl(media.url),
-          fileSize: 0, // Will be updated when we implement actual download
-          s3Key: `media/${fingerprint}`,
-          s3Url: media.url,
-          fingerprint,
+          fileName: storedFile.fileName,
+          originalName: storedFile.originalName,
+          fileType: storedFile.fileType,
+          fileSize: storedFile.fileSize,
+          s3Key: storedFile.filePath, // Use local file path
+          s3Url: storedFile.fileUrl, // Use local file URL
+          fingerprint: storedFile.fingerprint,
           transcription: processedMedia.transcription?.text,
           metadata: processedMedia.metadata,
         });

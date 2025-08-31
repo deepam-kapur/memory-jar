@@ -1,4 +1,4 @@
-import { Mem0 } from 'mem0ai';
+import Mem0 from 'mem0ai';
 import { env } from '../config/environment';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
@@ -123,7 +123,7 @@ export class Mem0Service {
       // Build search filters
       const filters: Record<string, any> = {};
       if (userId) {
-        filters.userId = userId;
+        filters['userId'] = userId;
       }
 
       // Search memories in Mem0

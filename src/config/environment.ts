@@ -23,11 +23,8 @@ const envSchema = z.object({
   MEM0_API_KEY: z.string().default('your_mem0_api_key'),
   MEM0_BASE_URL: z.string().url().default('https://api.mem0.ai'),
 
-  // AWS Configuration
-  AWS_ACCESS_KEY_ID: z.string().default('your_aws_access_key'),
-  AWS_SECRET_ACCESS_KEY: z.string().default('your_aws_secret_key'),
-  AWS_REGION: z.string().default('us-east-1'),
-  AWS_S3_BUCKET: z.string().default('your_s3_bucket_name'),
+  // Local Storage Configuration
+  STORAGE_DIR: z.string().default('storage/media'),
 
   // OpenAI Configuration
   OPENAI_API_KEY: z.string().default('your_openai_api_key'),
