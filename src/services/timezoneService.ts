@@ -1,6 +1,6 @@
 import { getDatabase } from './database';
 import logger from '../config/logger';
-import { zonedTimeToUtc, utcToZonedTime, format } from 'date-fns-tz';
+import { toZonedTime, fromZonedTime, format } from 'date-fns-tz';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subWeeks, subMonths } from 'date-fns';
 
 export interface TimeFilter {
@@ -94,21 +94,21 @@ export class TimezoneService {
     const userTimezone = await this.getUserTimezone(userId);
     
     // Get current time in user's timezone
-    const nowInUserTz = utcToZonedTime(new Date(), userTimezone);
+    const nowInUserTz = toZonedTime(new Date(), userTimezone);
     
     if (lowerQuery.includes('yesterday')) {
       const yesterday = subDays(nowInUserTz, 1);
       return {
-        startDate: zonedTimeToUtc(startOfDay(yesterday), userTimezone),
-        endDate: zonedTimeToUtc(endOfDay(yesterday), userTimezone),
+        startDate: fromZonedTime(startOfDay(yesterday), userTimezone),
+        endDate: fromZonedTime(endOfDay(yesterday), userTimezone),
         relativeTime: 'yesterday'
       };
     }
     
     if (lowerQuery.includes('today')) {
       return {
-        startDate: zonedTimeToUtc(startOfDay(nowInUserTz), userTimezone),
-        endDate: zonedTimeToUtc(endOfDay(nowInUserTz), userTimezone),
+        startDate: fromZonedTime(startOfDay(nowInUserTz), userTimezone),
+        endDate: fromZonedTime(endOfDay(nowInUserTz), userTimezone),
         relativeTime: 'today'
       };
     }
@@ -116,16 +116,16 @@ export class TimezoneService {
     if (lowerQuery.includes('last week')) {
       const lastWeekStart = subWeeks(nowInUserTz, 1);
       return {
-        startDate: zonedTimeToUtc(startOfWeek(lastWeekStart), userTimezone),
-        endDate: zonedTimeToUtc(endOfWeek(lastWeekStart), userTimezone),
+        startDate: fromZonedTime(startOfWeek(lastWeekStart), userTimezone),
+        endDate: fromZonedTime(endOfWeek(lastWeekStart), userTimezone),
         relativeTime: 'last week'
       };
     }
     
     if (lowerQuery.includes('this week')) {
       return {
-        startDate: zonedTimeToUtc(startOfWeek(nowInUserTz), userTimezone),
-        endDate: zonedTimeToUtc(endOfDay(nowInUserTz), userTimezone),
+        startDate: fromZonedTime(startOfWeek(nowInUserTz), userTimezone),
+        endDate: fromZonedTime(endOfDay(nowInUserTz), userTimezone),
         relativeTime: 'this week'
       };
     }
@@ -133,16 +133,16 @@ export class TimezoneService {
     if (lowerQuery.includes('last month')) {
       const lastMonth = subMonths(nowInUserTz, 1);
       return {
-        startDate: zonedTimeToUtc(startOfMonth(lastMonth), userTimezone),
-        endDate: zonedTimeToUtc(endOfMonth(lastMonth), userTimezone),
+        startDate: fromZonedTime(startOfMonth(lastMonth), userTimezone),
+        endDate: fromZonedTime(endOfMonth(lastMonth), userTimezone),
         relativeTime: 'last month'
       };
     }
     
     if (lowerQuery.includes('this month')) {
       return {
-        startDate: zonedTimeToUtc(startOfMonth(nowInUserTz), userTimezone),
-        endDate: zonedTimeToUtc(endOfDay(nowInUserTz), userTimezone),
+        startDate: fromZonedTime(startOfMonth(nowInUserTz), userTimezone),
+        endDate: fromZonedTime(endOfDay(nowInUserTz), userTimezone),
         relativeTime: 'this month'
       };
     }
@@ -150,8 +150,8 @@ export class TimezoneService {
     if (lowerQuery.includes('recent')) {
       const recentStart = subDays(nowInUserTz, 7);
       return {
-        startDate: zonedTimeToUtc(startOfDay(recentStart), userTimezone),
-        endDate: zonedTimeToUtc(endOfDay(nowInUserTz), userTimezone),
+        startDate: fromZonedTime(startOfDay(recentStart), userTimezone),
+        endDate: fromZonedTime(endOfDay(nowInUserTz), userTimezone),
         relativeTime: 'recent'
       };
     }
@@ -160,8 +160,8 @@ export class TimezoneService {
       const oldStart = subDays(nowInUserTz, 30);
       const oldEnd = subDays(nowInUserTz, 7);
       return {
-        startDate: zonedTimeToUtc(startOfDay(oldStart), userTimezone),
-        endDate: zonedTimeToUtc(endOfDay(oldEnd), userTimezone),
+        startDate: fromZonedTime(startOfDay(oldStart), userTimezone),
+        endDate: fromZonedTime(endOfDay(oldEnd), userTimezone),
         relativeTime: 'old'
       };
     }
@@ -205,7 +205,7 @@ export class TimezoneService {
    */
   async formatDateForUser(date: Date, userId: string): Promise<string> {
     const userTimezone = await this.getUserTimezone(userId);
-    return format(utcToZonedTime(date, userTimezone), 'MMM dd, yyyy HH:mm', { timeZone: userTimezone });
+    return format(toZonedTime(date, userTimezone), 'MMM dd, yyyy HH:mm', { timeZone: userTimezone });
   }
 
   /**
@@ -213,7 +213,7 @@ export class TimezoneService {
    */
   async convertToUserTimezone(date: Date, userId: string): Promise<Date> {
     const userTimezone = await this.getUserTimezone(userId);
-    return utcToZonedTime(date, userTimezone);
+    return toZonedTime(date, userTimezone);
   }
 
   /**
@@ -221,7 +221,7 @@ export class TimezoneService {
    */
   async convertFromUserTimezone(date: Date, userId: string): Promise<Date> {
     const userTimezone = await this.getUserTimezone(userId);
-    return zonedTimeToUtc(date, userTimezone);
+    return fromZonedTime(date, userTimezone);
   }
 
   /**

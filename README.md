@@ -70,13 +70,18 @@ A WhatsApp chatbot that uses Twilio's WhatsApp API and Mem0's memory layer to in
    
    Edit `.env` with your configuration:
    ```env
-   # Server Configuration
+   # Application Configuration
    NODE_ENV=development
    PORT=3000
    HOST=localhost
 
-   # Database Configuration
-   DATABASE_URL="postgresql://username:password@localhost:5432/memory_jar"
+   # PostgreSQL Database Configuration
+   DB_HOST=localhost
+   DB_PORT=5432
+   DB_USER=your_username
+   DB_PASS=your_password
+   DB_NAME=memory_jar
+   DATABASE_URL=postgresql://${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}
 
    # Twilio Configuration
    TWILIO_ACCOUNT_SID=your_twilio_account_sid
@@ -90,6 +95,10 @@ A WhatsApp chatbot that uses Twilio's WhatsApp API and Mem0's memory layer to in
    # OpenAI Configuration (for Whisper)
    OPENAI_API_KEY=your_openai_api_key
 
+   # Security Configuration
+   JWT_SECRET=your_jwt_secret_32_characters_long_minimum_required
+   API_KEY=your-api-key-16-chars
+
    # Logging Configuration
    LOG_LEVEL=info
    LOG_FILE=logs/app.log
@@ -97,11 +106,8 @@ A WhatsApp chatbot that uses Twilio's WhatsApp API and Mem0's memory layer to in
 
 4. **Set up the database**
    ```bash
-   # Run database migrations
-   npx prisma migrate dev
-   
-   # Seed the database (optional)
-   npm run seed
+   # Set up PostgreSQL database and run migrations
+   ./scripts/setup-local-db.sh
    ```
 
 5. **Build the project**
@@ -233,24 +239,28 @@ npm test
 # Run tests with coverage
 npm run test:coverage
 
-# Run E2E tests
-node test-e2e.js
+# Run unit tests only
+npm run test:unit
+
+# Run integration tests only
+npm run test:integration
+
+# Run performance tests
+npm run test:performance
 ```
 
-### Test Flows
+### E2E Testing
 ```bash
-# Test memory flows
-./flows/memory-flows.sh
-
-# Test webhook flows
-./flows/webhook-flows.sh
-
-# Test analytics flows
-./flows/analytics-flows.sh
-
-# Test all flows
-./flows/test-all-flows.sh
+# Run complete E2E test with WhatsApp, Twilio, and ngrok
+./scripts/e2e-test.sh
 ```
+
+This will:
+- Set up the database
+- Start the application
+- Create ngrok tunnel
+- Provide webhook URL for Twilio configuration
+- Guide you through WhatsApp testing
 
 ## 📊 Database Schema
 

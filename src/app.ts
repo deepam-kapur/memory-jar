@@ -49,9 +49,15 @@ app.use(timeoutHandler(30000)); // 30 seconds
 app.use(morgan(isDevelopment ? 'dev' : 'combined'));
 app.use(requestLogger);
 
-// Body parsing middleware
+// Body parsing middleware - but exclude webhook route
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use((req, res, next) => {
+  // Skip URL encoding for webhook route - we'll handle it manually
+  if (req.path === '/webhook') {
+    return next();
+  }
+  express.urlencoded({ extended: true, limit: '10mb' })(req, res, next);
+});
 
 // Request ID middleware for tracking
 app.use((req, _res, next) => {

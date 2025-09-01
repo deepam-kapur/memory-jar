@@ -17,14 +17,33 @@ export const searchSchema = z.object({
 
 // WhatsApp webhook schemas
 export const whatsAppWebhookSchema = z.object({
-  MessageSid: z.string(),
+  // Message identifiers - Twilio sends both MessageSid and SmsMessageSid
+  MessageSid: z.string().optional(),
+  SmsMessageSid: z.string().optional(),
+  SmsSid: z.string().optional(),
+  
+  // Basic message info
   From: z.string(),
   To: z.string(),
   Body: z.string().optional(),
+  
+  // Message metadata
+  MessageType: z.string().optional(),
+  SmsStatus: z.string().optional(),
   NumMedia: z.coerce.number().int().min(0).max(10).optional(),
+  NumSegments: z.coerce.number().int().min(0).optional(),
+  ReferralNumMedia: z.coerce.number().int().min(0).optional(),
+  
+  // Account and service info
   AccountSid: z.string().optional(),
+  MessagingServiceSid: z.string().optional(),
   ApiVersion: z.string().optional(),
   Timestamp: z.string().optional(),
+  
+  // WhatsApp specific fields
+  WaId: z.string().optional(),
+  ProfileName: z.string().optional(),
+  ChannelMetadata: z.string().optional(),
   MediaUrl0: z.string().url().optional(),
   MediaUrl1: z.string().url().optional(),
   MediaUrl2: z.string().url().optional(),
@@ -63,9 +82,14 @@ export const whatsAppWebhookSchema = z.object({
   Address: z.string().optional(),
   Label: z.string().optional(),
   DisplayName: z.string().optional(),
-  ProfileName: z.string().optional(),
-  WaId: z.string().optional(),
-}).passthrough(); // Allow additional fields for testing
+}).passthrough() // Allow additional fields for testing
+.refine(
+  (data) => data.MessageSid || data.SmsMessageSid || data.SmsSid,
+  {
+    message: "At least one message ID field (MessageSid, SmsMessageSid, or SmsSid) is required",
+    path: ["MessageSid"],
+  }
+);
 
 // Query message schema for testing
 export const queryMessageSchema = z.object({

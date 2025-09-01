@@ -180,7 +180,7 @@ setInterval(() => {
 export const createUserRateLimiter = (maxRequests: number, windowMs: number) => {
   return (req: Request, res: Response, next: NextFunction) => {
     // Extract user identifier from request
-    const userId = req.body?.userId || req.query?.userId || req.params?.userId;
+    const userId = req.body?.userId || req.query?.['userId'] || req.params?.['userId'];
     const phoneNumber = req.body?.From?.replace('whatsapp:', '') || req.headers['x-user-phone'];
     
     const userKey = userId || phoneNumber || req.ip;

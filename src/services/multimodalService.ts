@@ -372,7 +372,7 @@ export class MultimodalService {
       const storageHealth = await this.localStorageService.healthCheck();
 
       const allHealthy = [mem0Health, twilioHealth, openaiHealth, storageHealth].every(
-        health => health.status === 'healthy'
+        health => health === true || (typeof health === 'object' && health.status === 'healthy')
       );
 
       return {
