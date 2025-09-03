@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { env, isDevelopment } from './config/environment';
 import { initializeDatabase, closeDatabase } from './services/database';
+import { getReminderService } from './services/reminderService';
 
 // Import middleware
 import { requestLogger, errorLogger } from './config/logger';
@@ -18,6 +19,7 @@ import memoryRoutes from './routes/memories';
 import interactionRoutes from './routes/interactions';
 import analyticsRoutes from './routes/analytics';
 import mediaRoutes from './routes/media';
+import reminderRoutes from './routes/reminders';
 
 // Create Express application
 const app = express();
@@ -72,6 +74,7 @@ app.use(suspiciousActivityLimiter);
   app.use('/interactions', interactionRoutes);
   app.use('/analytics', analyticsRoutes);
   app.use('/media', mediaRoutes);
+  app.use('/reminders', reminderRoutes);
 
 // Root endpoint
 app.get('/', (_req, res) => {
@@ -88,6 +91,7 @@ app.get('/', (_req, res) => {
       memoriesList: '/memories/list (GET) - List all memories from DB',
       interactions: '/interactions/recent (GET) - Recent interactions',
       analytics: '/analytics/summary (GET) - Database analytics',
+      reminders: '/reminders (POST/GET) - Scheduled reminder management',
     },
   });
 });
@@ -108,6 +112,15 @@ const gracefulShutdown = (signal: string) => {
   server.close(async () => {
     console.log('✅ HTTP server closed');
     
+    // Stop reminder service
+    try {
+      const reminderService = getReminderService();
+      reminderService.stop();
+      console.log('✅ Reminder service stopped');
+    } catch (error) {
+      console.error('❌ Error stopping reminder service:', error);
+    }
+    
     // Close database connection
     await closeDatabase();
     
@@ -126,18 +139,26 @@ const server = app.listen(env.PORT, env.HOST, async () => {
   // Initialize database
   try {
     initializeDatabase();
-    // eslint-disable-next-line no-console
+     
     console.log('✅ Database initialized');
   } catch (error) {
-    // eslint-disable-next-line no-console
+     
     console.error('❌ Failed to initialize database:', error);
   }
 
-  // eslint-disable-next-line no-console
+  // Initialize reminder service
+  try {
+    getReminderService();
+    console.log('✅ Reminder service initialized and background job started');
+  } catch (error) {
+    console.error('❌ Failed to initialize reminder service:', error);
+  }
+
+   
   console.log(`🚀 Memory Jar server running on http://${env.HOST}:${env.PORT}`);
-  // eslint-disable-next-line no-console
+   
   console.log(`📊 Environment: ${env.NODE_ENV}`);
-  // eslint-disable-next-line no-console
+   
   console.log(`🔧 Node version: ${process.version}`);
 });
 
