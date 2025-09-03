@@ -269,15 +269,7 @@ export class MemoryController {
                 content: true,
               },
             },
-            mediaFiles: {
-              select: {
-                id: true,
-                fileName: true,
-                fileType: true,
-                storageUrl: true,
-                originalName: true
-              }
-            },
+            mediaFiles: true,
           },
         }),
         db.memory.count({ where: whereConditions }),

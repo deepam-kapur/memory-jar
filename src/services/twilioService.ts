@@ -50,6 +50,14 @@ export interface MediaFile {
   index: number;
 }
 
+export interface MediaInfo {
+  url: string;
+  filename: string;
+  contentType: string;
+}
+
+export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'VIDEO' | 'DOCUMENT';
+
 export interface ProcessedMessage {
   messageSid: string;
   from: string;
@@ -273,6 +281,71 @@ export class TwilioService {
   }
 
   /**
+   * Get message type based on payload
+   */
+  getMessageType(payload: TwilioWebhookPayload): MessageType {
+    const numMedia = parseInt(payload.NumMedia || '0');
+    
+    if (numMedia === 0) {
+      return 'TEXT';
+    }
+    
+    // Check first media type
+    const contentType = payload.MediaContentType0;
+    if (contentType?.startsWith('image/')) {
+      return 'IMAGE';
+    } else if (contentType?.startsWith('audio/')) {
+      return 'AUDIO';
+    } else if (contentType?.startsWith('video/')) {
+      return 'VIDEO';
+    } else {
+      return 'DOCUMENT';
+    }
+  }
+
+  /**
+   * Extract media information from payload
+   */
+  extractMediaInfo(payload: TwilioWebhookPayload): MediaInfo[] {
+    const numMedia = parseInt(payload.NumMedia || '0');
+    const mediaInfo: MediaInfo[] = [];
+    
+    for (let i = 0; i < numMedia; i++) {
+      const url = payload[`MediaUrl${i}` as keyof TwilioWebhookPayload] as string;
+      const contentType = payload[`MediaContentType${i}` as keyof TwilioWebhookPayload] as string;
+      
+      if (url && contentType) {
+        mediaInfo.push({
+          url,
+          filename: `media_${i}_${Date.now()}`,
+          contentType,
+        });
+      }
+    }
+    
+    return mediaInfo;
+  }
+
+  /**
+   * Health check for Twilio service
+   */
+  async healthCheck(): Promise<{ status: 'healthy' | 'unhealthy'; message: string }> {
+    try {
+      // Try to fetch account info to verify connectivity
+      await this.client.api.accounts(this.client.accountSid).fetch();
+      return {
+        status: 'healthy',
+        message: 'Twilio service is operational',
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        message: `Twilio service error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+  }
+
+  /**
    * Get Twilio client instance (for advanced operations)
    */
   getClient(): twilio.Twilio {
@@ -289,3 +362,6 @@ export const twilioService = (): TwilioService => {
   }
   return _twilioService;
 };
+
+// Legacy export for backwards compatibility
+export const getTwilioService = twilioService;

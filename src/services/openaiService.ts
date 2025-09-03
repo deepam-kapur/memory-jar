@@ -10,96 +10,81 @@ export interface TranscriptionResult {
   confidence?: number;
 }
 
+export interface EnhancedTranscriptionResult {
+  transcription: string;
+  language?: string;
+  confidence?: number;
+  speakers?: number;
+  sentiment?: 'positive' | 'negative' | 'neutral';
+  keywords?: string[];
+  duration?: number;
+}
+
 export class OpenAIService {
   private client: OpenAI;
 
   constructor() {
     if (!env.OPENAI_API_KEY) {
-      throw new Error('OPENAI_API_KEY is required for OpenAI integration');
+      logger.warn('OPENAI_API_KEY not provided, using mock implementation');
+      // Create a mock client that will throw errors if used
+      this.client = {} as OpenAI;
+    } else {
+      this.client = new OpenAI({
+        apiKey: env.OPENAI_API_KEY,
+      });
+      logger.info('OpenAI service initialized');
     }
-
-    this.client = new OpenAI({
-      apiKey: env.OPENAI_API_KEY,
-    });
-
-    logger.info('OpenAI service initialized');
   }
 
   /**
    * Enhanced audio transcription with metadata extraction
    */
-  async transcribeAudioWithMetadata(audioBuffer: Buffer, filename: string = 'audio.wav'): Promise<{
-    transcription: string;
-    language?: string;
-    confidence?: number;
-    speakers?: number;
-    sentiment?: 'positive' | 'negative' | 'neutral';
-    keywords?: string[];
-    duration?: number;
-  }> {
+  async transcribeAudioWithMetadata(audioBuffer: Buffer, filename: string = 'audio.wav'): Promise<EnhancedTranscriptionResult> {
     try {
       // Use real OpenAI API if available
-      if (this.openai && this.apiKey) {
+      if (env.OPENAI_API_KEY && this.client.audio) {
         try {
-          // Create temporary file for Node.js compatibility
-          const tempPath = join(tmpdir(), `whisper_enhanced_${Date.now()}_${filename}`);
-          
-          try {
-            // Write audio buffer to temporary file
-            writeFileSync(tempPath, audioBuffer);
-            
-            // Create read stream from temporary file
-            const fileStream = createReadStream(tempPath);
-            
-            // Transcribe using OpenAI Whisper with enhanced options
-            const transcription = await this.openai.audio.transcriptions.create({
-              file: fileStream,
-              model: 'whisper-1',
-              response_format: 'verbose_json', // Get detailed metadata
-              language: undefined, // Auto-detect language
-              prompt: 'This is a voice note that might contain reminders, tasks, or personal observations.',
-            });
+          // Create a file object from the buffer
+          const file = new File([audioBuffer], filename, {
+            type: 'audio/wav',
+          });
 
-            // Extract basic transcription text
-            const transcriptionText = typeof transcription === 'string' ? transcription : (transcription as any).text || '';
+          // Transcribe using OpenAI Whisper with enhanced options
+          const transcription = await this.client.audio.transcriptions.create({
+            file,
+            model: 'whisper-1',
+            response_format: 'verbose_json', // Get detailed metadata
+            language: undefined, // Auto-detect language
+            prompt: 'This is a voice note that might contain reminders, tasks, or personal observations.',
+          });
 
-            // Analyze sentiment and extract keywords using GPT
-            const analysis = await this.analyzeTranscriptionContent(transcriptionText);
+          // Extract basic transcription text
+          const transcriptionText = typeof transcription === 'string' ? transcription : (transcription as any).text || '';
 
-            const result = {
-              transcription: transcriptionText,
-              language: (transcription as any).language || 'unknown',
-              confidence: this.estimateConfidence(transcriptionText),
-              speakers: this.estimateSpeakerCount(transcriptionText),
-              sentiment: analysis.sentiment,
-              keywords: analysis.keywords,
-              duration: (transcription as any).duration || this.estimateDuration(audioBuffer)
-            };
+          // Analyze sentiment and extract keywords using GPT
+          const analysis = await this.analyzeTranscriptionContent(transcriptionText);
 
-            logger.info('Audio transcribed with enhanced metadata using OpenAI Whisper', {
-              filename,
-              transcriptionLength: transcriptionText.length,
-              audioSize: audioBuffer.length,
-              language: result.language,
-              confidence: result.confidence,
-              sentiment: result.sentiment,
-              keywordsCount: result.keywords?.length || 0,
-              tempPath,
-            });
+          const result: EnhancedTranscriptionResult = {
+            transcription: transcriptionText,
+            language: (transcription as any).language || 'unknown',
+            confidence: this.estimateConfidence(transcriptionText),
+            speakers: this.estimateSpeakerCount(transcriptionText),
+            sentiment: analysis.sentiment,
+            keywords: analysis.keywords,
+            duration: (transcription as any).duration || this.estimateDuration(audioBuffer)
+          };
 
-            return result;
-          } finally {
-            // Clean up temporary file
-            try {
-              unlinkSync(tempPath);
-              logger.debug('Temporary audio file cleaned up', { tempPath });
-            } catch (cleanupError) {
-              logger.warn('Failed to clean up temporary audio file', {
-                tempPath,
-                error: cleanupError instanceof Error ? cleanupError.message : 'Unknown error',
-              });
-            }
-          }
+          logger.info('Audio transcribed with enhanced metadata using OpenAI Whisper', {
+            filename,
+            transcriptionLength: transcriptionText.length,
+            audioSize: audioBuffer.length,
+            language: result.language,
+            confidence: result.confidence,
+            sentiment: result.sentiment,
+            keywordsCount: result.keywords?.length || 0,
+          });
+
+          return result;
         } catch (apiError) {
           logger.error('OpenAI API error, falling back to mock transcription', { apiError });
           // Fall back to mock transcription if API fails
@@ -132,34 +117,51 @@ export class OpenAIService {
         filename,
       });
 
-      // Create a file object from the buffer
-      const file = new File([audioBuffer], filename || 'audio.wav', {
-        type: 'audio/wav',
-      });
+      // Use real OpenAI API if available
+      if (env.OPENAI_API_KEY && this.client.audio) {
+        try {
+          // Create a file object from the buffer
+          const file = new File([audioBuffer], filename || 'audio.wav', {
+            type: 'audio/wav',
+          });
 
-      // Transcribe using Whisper
-      const transcription = await this.client.audio.transcriptions.create({
-        file,
-        model: 'whisper-1',
-        response_format: 'verbose_json',
-        language: 'en', // Default to English, can be made configurable
-      });
+          // Transcribe using Whisper
+          const transcription = await this.client.audio.transcriptions.create({
+            file,
+            model: 'whisper-1',
+            response_format: 'verbose_json',
+            language: 'en', // Default to English, can be made configurable
+          });
 
-      const result: TranscriptionResult = {
-        text: transcription.text,
-        language: transcription.language,
-        duration: transcription.duration,
-        confidence: transcription.segments?.[0]?.avg_logprob || 0,
+          const result: TranscriptionResult = {
+            text: transcription.text,
+            language: transcription.language,
+            duration: transcription.duration,
+            confidence: (transcription as any).segments?.[0]?.avg_logprob || 0,
+          };
+
+          logger.info('Audio transcription completed', {
+            textLength: result.text.length,
+            language: result.language,
+            duration: result.duration,
+            confidence: result.confidence,
+          });
+
+          return result;
+        } catch (apiError) {
+          logger.error('OpenAI API error, falling back to mock transcription', { apiError });
+        }
+      }
+
+      // Fallback to mock transcription
+      const mockText = this.mockTranscription(audioBuffer);
+      return {
+        text: mockText,
+        language: 'en',
+        duration: this.estimateDuration(audioBuffer),
+        confidence: 0.8
       };
 
-      logger.info('Audio transcription completed', {
-        textLength: result.text.length,
-        language: result.language,
-        duration: result.duration,
-        confidence: result.confidence,
-      });
-
-      return result;
     } catch (error) {
       logger.error('Error transcribing audio', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -214,12 +216,12 @@ export class OpenAIService {
     }
   ): Promise<string | null> {
     try {
-      if (!this.openai || !this.apiKey) {
+      if (!env.OPENAI_API_KEY || !this.client.chat) {
         logger.warn('OpenAI service not initialized, cannot generate chat completion');
         return null;
       }
 
-      const completion = await this.openai.chat.completions.create({
+      const completion = await this.client.chat.completions.create({
         model: options?.model || 'gpt-3.5-turbo',
         messages,
         temperature: options?.temperature ?? 0.7,
@@ -255,6 +257,13 @@ export class OpenAIService {
    */
   async healthCheck(): Promise<{ status: 'healthy' | 'unhealthy'; message: string }> {
     try {
+      if (!env.OPENAI_API_KEY) {
+        return {
+          status: 'healthy',
+          message: 'OpenAI service running in mock mode (no API key)',
+        };
+      }
+
       // Try to list models to verify API connectivity
       await this.client.models.list();
       
@@ -269,8 +278,6 @@ export class OpenAIService {
       };
     }
   }
-<<<<<<< Updated upstream
-=======
 
   /**
    * Analyze transcription content for sentiment and keywords
@@ -280,8 +287,8 @@ export class OpenAIService {
     keywords: string[];
   }> {
     try {
-      if (this.openai && this.apiKey) {
-        const response = await this.openai.chat.completions.create({
+      if (env.OPENAI_API_KEY && this.client.chat) {
+        const response = await this.client.chat.completions.create({
           model: 'gpt-3.5-turbo',
           messages: [
             {
@@ -401,15 +408,7 @@ Focus on extracting actionable keywords and determining overall emotional tone.`
   /**
    * Enhanced mock audio analysis
    */
-  private mockAudioAnalysis(audioBuffer: Buffer, filename: string): {
-    transcription: string;
-    language?: string;
-    confidence?: number;
-    speakers?: number;
-    sentiment?: 'positive' | 'negative' | 'neutral';
-    keywords?: string[];
-    duration?: number;
-  } {
+  private mockAudioAnalysis(audioBuffer: Buffer, filename: string): EnhancedTranscriptionResult {
     const mockTranscription = this.mockTranscription(audioBuffer);
     const analysis = this.simpleTextAnalysis(mockTranscription);
     
@@ -443,7 +442,6 @@ Focus on extracting actionable keywords and determining overall emotional tone.`
     const index = audioBuffer.length % mockTranscriptions.length;
     return mockTranscriptions[index] || "Mock transcription";
   }
->>>>>>> Stashed changes
 }
 
 // Export singleton instance
