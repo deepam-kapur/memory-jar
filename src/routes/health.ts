@@ -49,7 +49,7 @@ router.get('/detailed', async (_req, res) => {
       },
       services: {
         database: dbHealth.status === 'fulfilled' ? dbHealth.value.status : 'unhealthy',
-        mem0: mem0Health.status === 'fulfilled' ? mem0Health.value.status : 'unhealthy',
+        mem0: mem0Health.status === 'fulfilled' ? (mem0Health.value ? 'healthy' : 'unhealthy') : 'unhealthy',
         openai: openaiHealth.status === 'fulfilled' ? openaiHealth.value.status : 'unhealthy',
         localStorage: localStorageHealth.status === 'fulfilled' ? localStorageHealth.value.status : 'unhealthy',
       },
@@ -84,7 +84,7 @@ router.get('/ready', async (_req, res) => {
     ]);
     
     const isDbHealthy = dbHealth.status === 'fulfilled' && dbHealth.value.status === 'healthy';
-    const isMem0Healthy = mem0Health.status === 'fulfilled' && mem0Health.value.status === 'healthy';
+    const isMem0Healthy = mem0Health.status === 'fulfilled' && mem0Health.value === true;
     const isOpenAIHealthy = openaiHealth.status === 'fulfilled' && openaiHealth.value.status === 'healthy';
     const isLocalStorageHealthy = localStorageHealth.status === 'fulfilled' && localStorageHealth.value.status === 'healthy';
     

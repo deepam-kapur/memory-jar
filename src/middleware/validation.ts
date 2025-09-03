@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { z, ZodError } from 'zod';
-import { ValidationError } from '../utils/errors';
+import { ValidationError, UnauthorizedError } from '../utils/errors';
+import crypto from 'crypto';
+import { env } from '../config/environment';
 
 // Validation middleware factory
 export const validate = (schema: z.ZodSchema, location: 'body' | 'query' | 'params' = 'body') => {
@@ -186,6 +188,176 @@ export const validateCuid = (req: Request, _res: Response, next: NextFunction) =
       }
     }
   }
+  
+  next();
+};
+
+// Configurable Twilio webhook signature validation middleware
+export const createTwilioSignatureValidator = (options: {
+  enabled?: boolean;
+  debug?: boolean;
+  skipInDevelopment?: boolean;
+} = {}) => {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const {
+      enabled = env.TWILIO_SIGNATURE_VALIDATION_ENABLED,
+      debug = env.TWILIO_SIGNATURE_DEBUG,
+      skipInDevelopment = false
+    } = options;
+
+
+
+    // Skip validation if disabled
+    if (!enabled) {
+      if (debug) {
+        console.log('🔄 Twilio signature validation: DISABLED');
+      }
+      return next();
+    }
+
+    // Skip in development if requested
+    if (skipInDevelopment && env.NODE_ENV === 'development') {
+      if (debug) {
+        console.log('🔄 Twilio signature validation: SKIPPED (development mode)');
+      }
+      return next();
+    }
+
+    const twilioSignature = req.headers['x-twilio-signature'] as string;
+    
+    if (!twilioSignature) {
+      if (debug) {
+        console.log('❌ Twilio signature validation: Missing X-Twilio-Signature header');
+        console.log('   Available headers:', Object.keys(req.headers));
+      }
+      return next(new UnauthorizedError('Missing Twilio signature', 'MISSING_SIGNATURE'));
+    }
+    
+    // Get the raw body for signature validation
+    const rawBody = (req as any).rawBody;
+    if (!rawBody) {
+      if (debug) {
+        console.log('❌ Twilio signature validation: Raw body not available');
+        console.log('   Body type:', typeof req.body);
+        console.log('   Body content:', req.body);
+      }
+      return next(new UnauthorizedError('Raw body not available for signature validation', 'MISSING_RAW_BODY'));
+    }
+    
+    // Construct URL considering proxy/ngrok headers
+    const protocol = req.get('X-Forwarded-Proto') || req.protocol;
+    const host = req.get('X-Forwarded-Host') || req.get('host');
+    const url = `${protocol}://${host}${req.originalUrl}`;
+    
+    if (debug) {
+      console.log('🔍 Twilio Signature Validation Debug:');
+      console.log('  Validation: ENABLED');
+      console.log('  URL:', url);
+      console.log('  Raw Body:', rawBody);
+      console.log('  Raw Body Length:', rawBody.length);
+      console.log('  Auth Token:', env.TWILIO_AUTH_TOKEN.substring(0, 8) + '...');
+      console.log('  Received Signature:', twilioSignature);
+    }
+    
+    // Create the expected signature
+    const expectedSignature = crypto
+      .createHmac('sha1', env.TWILIO_AUTH_TOKEN)
+      .update(url + rawBody)
+      .digest('base64');
+    
+    const expectedSignatureHeader = `sha1=${expectedSignature}`;
+    
+    // Handle both signature formats: with and without 'sha1=' prefix
+    const normalizedTwilioSignature = twilioSignature.startsWith('sha1=') ? twilioSignature : `sha1=${twilioSignature}`;
+    const normalizedExpectedSignature = expectedSignatureHeader;
+    
+    if (debug) {
+      console.log('  Expected Signature:', normalizedExpectedSignature);
+      console.log('  Received Signature (normalized):', normalizedTwilioSignature);
+      console.log('  Match:', normalizedExpectedSignature === normalizedTwilioSignature);
+    }
+    
+    // Compare signatures using timing-safe comparison
+    // Ensure both buffers have the same length for timingSafeEqual
+    const twilioSigBuffer = Buffer.from(normalizedTwilioSignature);
+    const expectedSigBuffer = Buffer.from(normalizedExpectedSignature);
+    
+    if (twilioSigBuffer.length !== expectedSigBuffer.length) {
+      if (debug) {
+        console.log('❌ Signature length mismatch:', twilioSigBuffer.length, 'vs', expectedSigBuffer.length);
+      }
+      return next(new UnauthorizedError('Invalid Twilio signature', 'INVALID_SIGNATURE'));
+    }
+    
+    if (!crypto.timingSafeEqual(twilioSigBuffer, expectedSigBuffer)) {
+      if (debug) {
+        console.log('❌ Signature comparison failed');
+        console.log('  Twilio buffer:', twilioSigBuffer.toString());
+        console.log('  Expected buffer:', expectedSigBuffer.toString());
+      }
+      return next(new UnauthorizedError('Invalid Twilio signature', 'INVALID_SIGNATURE'));
+    }
+    
+    if (debug) {
+      console.log('✅ Twilio signature validation: PASSED');
+    }
+    
+    next();
+  };
+};
+
+// Default middleware with environment-based configuration
+export const validateTwilioSignature = createTwilioSignatureValidator();
+
+// API key validation middleware
+export const validateApiKey = (req: Request, _res: Response, next: NextFunction) => {
+  const apiKey = req.headers['x-api-key'] as string;
+  const authHeader = req.headers['authorization'] as string;
+  
+  // Check for API key in header or Authorization bearer token
+  let providedKey = apiKey;
+  if (!providedKey && authHeader && authHeader.startsWith('Bearer ')) {
+    providedKey = authHeader.substring(7);
+  }
+  
+  if (!providedKey) {
+    return next(new UnauthorizedError('API key required', 'MISSING_API_KEY'));
+  }
+  
+  // In production, this would validate against a database of API keys
+  // For now, we'll use a simple environment variable
+  const validApiKey = env.API_KEY || 'development-api-key';
+  
+  if (providedKey !== validApiKey) {
+    return next(new UnauthorizedError('Invalid API key', 'INVALID_API_KEY'));
+  }
+  
+  next();
+};
+
+// Content Security Policy validation
+export const validateContentSecurityPolicy = (req: Request, res: Response, next: NextFunction) => {
+  // Set CSP headers
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "media-src 'self'",
+    "object-src 'none'",
+    "frame-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'"
+  ].join('; '));
+  
+  // Additional security headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
   
   next();
 };

@@ -38,7 +38,7 @@ export class AnalyticsController {
         _avg: { importance: true },
       });
 
-      // Get recent activity (last 7 days)
+      // Get recent activity (last 7 days) - using UTC for global analytics
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 

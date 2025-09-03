@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
 import { getMem0Service } from '../services/mem0Service';
+import { getTimezoneService } from '../services/timezoneService';
 import { NotFoundError, BadRequestError, ErrorCodes } from '../utils/errors';
 import logger from '../config/logger';
 
@@ -108,7 +109,7 @@ export class MemoryController {
   }
 
   /**
-   * Search memories using Mem0 for semantic search
+   * Search memories using Mem0 for semantic search with timezone-aware filtering
    * GET /memories?query=<text>
    */
   static async searchMemories(req: Request, res: Response) {
@@ -116,6 +117,28 @@ export class MemoryController {
       const { query, page = 1, limit = 20, userId, memoryType, tags, minImportance, maxImportance } = req.query;
       const db = getDatabase();
       const mem0Service = getMem0Service();
+      const timezoneService = getTimezoneService();
+
+      // Parse time-based queries for timezone-aware filtering
+      let timeFilter = {};
+      if (userId && query) {
+        const parsedTimeFilter = await timezoneService.parseTimeQuery(query as string, userId as string);
+        if (parsedTimeFilter.startDate || parsedTimeFilter.endDate) {
+          timeFilter = {
+            createdAt: {
+              ...(parsedTimeFilter.startDate && { gte: parsedTimeFilter.startDate }),
+              ...(parsedTimeFilter.endDate && { lte: parsedTimeFilter.endDate }),
+            },
+          };
+          
+          logger.info('Applied timezone-aware time filter', {
+            userId,
+            query,
+            timeFilter: parsedTimeFilter,
+            requestId: req.id,
+          });
+        }
+      }
 
       // Search memories using Mem0 for semantic search
       const mem0Results = await mem0Service.searchMemories(
@@ -132,6 +155,7 @@ export class MemoryController {
         mem0Id: {
           in: memoryIds,
         },
+        ...timeFilter, // Apply timezone-aware time filtering
       };
 
       // Add optional filters

@@ -7,7 +7,7 @@ import { initializeDatabase, closeDatabase } from './services/database';
 
 // Import middleware
 import { requestLogger, errorLogger } from './config/logger';
-import { sanitize } from './middleware/validation';
+import { sanitize, validateContentSecurityPolicy } from './middleware/validation';
 import { suspiciousActivityLimiter } from './middleware/rateLimit';
 import { errorHandler, notFoundHandler, timeoutHandler } from './middleware/errorHandler';
 
@@ -36,22 +36,28 @@ app.use(helmet({
 
 // CORS configuration
 app.use(cors({
-  origin: isDevelopment ? ['http://localhost:3000', 'http://localhost:3001'] : [],
+  origin: isDevelopment ? ['http://localhost:3000', 'http://localhost:3001'] : (env.CORS_ORIGIN ? [env.CORS_ORIGIN] : false),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-API-Key'],
 }));
 
 // Request timeout handler
-app.use(timeoutHandler(30000)); // 30 seconds
+app.use(timeoutHandler(300000)); // 30 seconds
 
 // Request logging
 app.use(morgan(isDevelopment ? 'dev' : 'combined'));
 app.use(requestLogger);
 
-// Body parsing middleware
+// Body parsing middleware - but exclude webhook route
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use((req, res, next) => {
+  // Skip URL encoding for webhook route - we'll handle it manually
+  if (req.path === '/webhook') {
+    return next();
+  }
+  express.urlencoded({ extended: true, limit: '10mb' })(req, res, next);
+});
 
 // Request ID middleware for tracking
 app.use((req, _res, next) => {
@@ -61,6 +67,9 @@ app.use((req, _res, next) => {
 
 // Input sanitization
 app.use(sanitize);
+
+// Security headers
+app.use(validateContentSecurityPolicy);
 
 // Rate limiting
 app.use(suspiciousActivityLimiter);
@@ -126,18 +135,18 @@ const server = app.listen(env.PORT, env.HOST, async () => {
   // Initialize database
   try {
     initializeDatabase();
-    // eslint-disable-next-line no-console
+     
     console.log('✅ Database initialized');
   } catch (error) {
-    // eslint-disable-next-line no-console
+     
     console.error('❌ Failed to initialize database:', error);
   }
 
-  // eslint-disable-next-line no-console
+   
   console.log(`🚀 Memory Jar server running on http://${env.HOST}:${env.PORT}`);
-  // eslint-disable-next-line no-console
+   
   console.log(`📊 Environment: ${env.NODE_ENV}`);
-  // eslint-disable-next-line no-console
+   
   console.log(`🔧 Node version: ${process.version}`);
 });
 

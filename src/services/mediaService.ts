@@ -21,8 +21,8 @@ export interface MediaFile {
   originalName: string;
   fileType: string;
   fileSize: number;
-  s3Key: string;
-  s3Url: string;
+  storageKey: string;
+  storageUrl: string;
   fingerprint: string;
   transcription: string | null;
   metadata: Prisma.JsonValue;
@@ -130,8 +130,8 @@ export class MediaService {
           originalName,
           fileType: contentType,
           fileSize: existingMedia.fileSize,
-          s3Key: existingMedia.s3Key, // Reference the same local path
-          s3Url: existingMedia.s3Url, // Reference the same local URL
+          storageKey: existingMedia.storageKey, // Reference the same local path
+          storageUrl: existingMedia.storageUrl, // Reference the same local URL
           fingerprint: fingerprint.hash, // Same fingerprint
           transcription,
           metadata: {
@@ -194,8 +194,8 @@ export class MediaService {
         originalName,
         fileType: contentType,
         fileSize: fingerprint.size,
-        s3Key: storedFile.filePath, // Use local file path instead of S3 key
-        s3Url: storedFile.fileUrl, // Use local file URL instead of S3 URL
+        storageKey: storedFile.filePath, // Use local file path instead of S3 key
+        storageUrl: storedFile.fileUrl, // Use local file URL instead of S3 URL
         fingerprint: fingerprint.hash,
         transcription,
         metadata: {
@@ -329,7 +329,7 @@ export class MediaService {
       db.mediaFile.count({
         where: {
           metadata: {
-            path: 'isReference',
+            path: ['isReference'],
             equals: false,
           },
         },
