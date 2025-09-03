@@ -20,6 +20,7 @@ import interactionRoutes from './routes/interactions';
 import analyticsRoutes from './routes/analytics';
 import mediaRoutes from './routes/media';
 import reminderRoutes from './routes/reminders';
+import sharingRoutes from './routes/sharing';
 
 // Create Express application
 const app = express();
@@ -75,6 +76,7 @@ app.use(suspiciousActivityLimiter);
   app.use('/analytics', analyticsRoutes);
   app.use('/media', mediaRoutes);
   app.use('/reminders', reminderRoutes);
+  app.use('/sharing', sharingRoutes);
 
 // Root endpoint
 app.get('/', (_req, res) => {

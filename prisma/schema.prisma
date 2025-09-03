@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
   output   = "../src/generated/prisma"
@@ -11,48 +8,40 @@ datasource db {
   url      = "file:./prisma/dev.db"
 }
 
-// User model - represents WhatsApp users
 model User {
-  id          String   @id @default(cuid())
-  phoneNumber String   @unique
-  name        String?
-  timezone    String   @default("UTC")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  isActive    Boolean  @default(true)
-
-  // Relations
+  id           String         @id @default(cuid())
+  phoneNumber  String         @unique
+  name         String?
+  timezone     String         @default("UTC")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  isActive     Boolean        @default(true)
   interactions Interaction[]
-  memories     Memory[]
   mediaFiles   MediaFile[]
+  memories     Memory[]
   reminders    Reminder[]
-  sharedFrom   SharedMemory[] @relation("SharedFrom")
   sharedTo     SharedMemory[] @relation("SharedTo")
+  sharedFrom   SharedMemory[] @relation("SharedFrom")
 
-  // Indexes
   @@index([phoneNumber])
   @@index([createdAt])
   @@map("users")
 }
 
-// Interaction model - represents WhatsApp interactions
 model Interaction {
-  id          String   @id @default(cuid())
+  id          String            @id @default(cuid())
   userId      String
-  messageSid  String?  @unique // Twilio MessageSid for idempotency
+  messageSid  String?           @unique
   messageType MessageType
-  content     String?  // Text content or description
-  timestamp   DateTime @default(now())
+  content     String?
+  timestamp   DateTime          @default(now())
   direction   Direction
   status      InteractionStatus @default(PENDING)
-  metadata    Json?    // Additional data like message ID, etc.
-
-  // Relations
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  memories    Memory[]
+  metadata    Json?
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   mediaFiles  MediaFile[]
+  memories    Memory[]
 
-  // Indexes
   @@index([userId])
   @@index([timestamp])
   @@index([messageType])
@@ -61,29 +50,25 @@ model Interaction {
   @@map("interactions")
 }
 
-// Memory model - represents semantic memories stored in Mem0
 model Memory {
-  id            String   @id @default(cuid())
-  userId        String
-  interactionId String?
-  content       String   // The memory content
-  mem0Id        String?  // Mem0 memory ID
-  memoryType    MemoryType
-  tags          Json     // Array of tags for categorization stored as JSON
-  importance    Int      @default(1) // 1-10 scale
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  lastAccessed  DateTime @default(now())
-  accessCount   Int      @default(0)
-
-  // Relations
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  interaction Interaction? @relation(fields: [interactionId], references: [id], onDelete: SetNull)
-  mediaFiles  MediaFile[]
-  reminders   Reminder[]
+  id             String         @id @default(cuid())
+  userId         String
+  interactionId  String?
+  content        String
+  mem0Id         String?
+  memoryType     MemoryType
+  tags           Json
+  importance     Int            @default(1)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  lastAccessed   DateTime       @default(now())
+  accessCount    Int            @default(0)
+  mediaFiles     MediaFile[]
+  interaction    Interaction?   @relation(fields: [interactionId], references: [id])
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reminders      Reminder[]
   sharedMemories SharedMemory[]
 
-  // Indexes
   @@index([userId])
   @@index([mem0Id])
   @@index([memoryType])
@@ -94,29 +79,25 @@ model Memory {
   @@map("memories")
 }
 
-// MediaFile model - represents uploaded media files
 model MediaFile {
-  id            String   @id @default(cuid())
+  id            String       @id @default(cuid())
   userId        String
   interactionId String?
   memoryId      String?
   fileName      String
   originalName  String
-  fileType      String   // MIME type
-  fileSize      Int      // Size in bytes
-  s3Key         String   // S3 object key
-  s3Url         String   // S3 URL
-  fingerprint   String   @unique // SHA-256 hash for deduplication
-  transcription String?  // For audio files
-  metadata      Json?    // Additional file metadata
-  createdAt     DateTime @default(now())
+  fileType      String
+  fileSize      Int
+  s3Key         String
+  s3Url         String
+  fingerprint   String       @unique
+  transcription String?
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+  memory        Memory?      @relation(fields: [memoryId], references: [id])
+  interaction   Interaction? @relation(fields: [interactionId], references: [id])
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // Relations
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  interaction Interaction? @relation(fields: [interactionId], references: [id], onDelete: SetNull)
-  memory      Memory?     @relation(fields: [memoryId], references: [id], onDelete: SetNull)
-
-  // Indexes
   @@index([userId])
   @@index([fileType])
   @@index([createdAt])
@@ -124,71 +105,58 @@ model MediaFile {
   @@map("media_files")
 }
 
-// Analytics model - for tracking usage and performance
 model Analytics {
   id        String   @id @default(cuid())
   userId    String?
-  eventType String   // e.g., "memory_created", "memory_retrieved", "file_uploaded"
-  eventData Json?    // Additional event data
+  eventType String
+  eventData Json?
   timestamp DateTime @default(now())
   ipAddress String?
   userAgent String?
 
-  // Indexes
   @@index([userId])
   @@index([eventType])
   @@index([timestamp])
   @@map("analytics")
 }
 
-// Reminder model - for scheduled memory reminders
 model Reminder {
-  id          String   @id @default(cuid())
-  userId      String
-  memoryId    String
+  id           String         @id @default(cuid())
+  userId       String
+  memoryId     String
   scheduledFor DateTime
-  message     String
-  status      ReminderStatus @default(PENDING)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  message      String
+  status       ReminderStatus @default(PENDING)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  memory       Memory         @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // Relations
-  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  memory  Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
-
-  // Indexes
   @@index([userId])
   @@index([scheduledFor])
   @@map("reminders")
 }
 
-// SharedMemory model - for memory sharing between users
 model SharedMemory {
-  id          String   @id @default(cuid())
+  id          String             @id @default(cuid())
   memoryId    String
   fromUserId  String
   toUserId    String
   message     String?
   status      SharedMemoryStatus @default(PENDING)
   respondedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  toUser      User               @relation("SharedTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  fromUser    User               @relation("SharedFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  memory      Memory             @relation(fields: [memoryId], references: [id], onDelete: Cascade)
 
-  // Relations
-  memory    Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
-  fromUser  User   @relation("SharedFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
-  toUser    User   @relation("SharedTo", fields: [toUserId], references: [id], onDelete: Cascade)
-
-  // Indexes
   @@index([memoryId])
   @@index([fromUserId])
   @@index([toUserId])
   @@map("shared_memories")
 }
 
-
-
-// Enums
 enum MessageType {
   TEXT
   IMAGE
@@ -200,8 +168,8 @@ enum MessageType {
 }
 
 enum Direction {
-  INBOUND   // Message from user to system
-  OUTBOUND  // Message from system to user
+  INBOUND
+  OUTBOUND
 }
 
 enum InteractionStatus {
@@ -230,5 +198,3 @@ enum SharedMemoryStatus {
   ACCEPTED
   REJECTED
 }
-
-

@@ -141,6 +141,62 @@ export const getAnalyticsSchema = z.object({
   ...paginationSchema.shape,
 });
 
+// Reminder schemas
+export const createReminderSchema = z.object({
+  userId: z.string().cuid(),
+  memoryId: z.string().cuid(),
+  scheduledFor: z.string().datetime().optional(),
+  naturalLanguageTime: z.string().min(1).max(200).optional(),
+  message: z.string().min(1).max(1000),
+  timezone: z.string().optional(),
+}).refine(
+  (data) => data.scheduledFor || data.naturalLanguageTime,
+  {
+    message: "Either scheduledFor or naturalLanguageTime must be provided",
+    path: ["scheduledFor", "naturalLanguageTime"],
+  }
+);
+
+export const getReminderSchema = z.object({
+  userId: z.string().cuid(),
+  status: z.enum(['PENDING', 'SENT', 'CANCELLED']).optional(),
+  ...paginationSchema.shape,
+});
+
+export const cancelReminderSchema = z.object({
+  id: z.string().cuid(),
+});
+
+// Memory sharing schemas
+export const shareMemorySchema = z.object({
+  memoryId: z.string().cuid(),
+  fromUserId: z.string().cuid(),
+  toPhoneNumber: z.string().min(10).max(15).regex(/^\+?[\d\s\-\(\)]+$/),
+  message: z.string().max(500).optional(),
+});
+
+export const acceptShareSchema = z.object({
+  toUserId: z.string().cuid(),
+  copyToMyMemories: z.boolean().default(true),
+});
+
+export const rejectShareSchema = z.object({
+  toUserId: z.string().cuid(),
+});
+
+export const respondToShareSchema = z.object({
+  shareId: z.string().cuid(),
+  userId: z.string().cuid(),
+  action: z.enum(['accept', 'reject']),
+  message: z.string().max(500).optional(),
+});
+
+export const getUserSharesSchema = z.object({
+  userId: z.string().cuid(),
+  type: z.enum(['sent', 'received', 'all']).default('all'),
+  status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']).optional(),
+});
+
 // Export all schemas
 export const schemas = {
   // Common
@@ -162,4 +218,16 @@ export const schemas = {
   // Analytics
   createAnalytics: createAnalyticsSchema,
   getAnalytics: getAnalyticsSchema,
+  
+  // Reminders
+  createReminder: createReminderSchema,
+  getReminder: getReminderSchema,
+  cancelReminder: cancelReminderSchema,
+  
+  // Memory Sharing
+  shareMemory: shareMemorySchema,
+  acceptShare: acceptShareSchema,
+  rejectShare: rejectShareSchema,
+  respondToShare: respondToShareSchema,
+  getUserShares: getUserSharesSchema,
 };

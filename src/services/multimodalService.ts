@@ -5,7 +5,9 @@ import { getTwilioService } from './twilioService';
 import { getOpenAIService } from './openaiService';
 import { getLocalStorageService } from './localStorageService';
 import { getImageProcessingService } from './imageProcessingService';
-import { MediaService } from './mediaService';
+
+import { getMoodDetectionService, MoodDetection } from './moodDetectionService';
+import { getGeoTaggingService, LocationInfo, GeoTaggedMemory } from './geoTaggingService';
 import { TwilioWebhookPayload, MediaInfo } from './twilioService';
 
 export interface MediaFileInfo {
@@ -21,9 +23,11 @@ export interface ProcessedMemory {
   content: string;
   memoryType: 'TEXT' | 'IMAGE' | 'AUDIO' | 'MIXED';
   mediaFiles: (string | MediaFileInfo)[];
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   userId: string;
   interactionId?: string;
+  moodDetection?: MoodDetection;
+  geoTagging?: GeoTaggedMemory;
 }
 
 export class MultimodalService {
@@ -32,6 +36,8 @@ export class MultimodalService {
   private openaiService = getOpenAIService();
   private localStorageService = getLocalStorageService();
   private imageProcessingService = getImageProcessingService();
+  private moodDetectionService = getMoodDetectionService();
+  private geoTaggingService = getGeoTaggingService();
 
   /**
    * Process incoming WhatsApp message and create memory
@@ -70,6 +76,9 @@ export class MultimodalService {
         case 'DOCUMENT':
           processedMemory = await this.processDocumentMessage(payload, mediaInfo, userId, interactionId);
           break;
+        case 'LOCATION':
+          processedMemory = await this.processLocationMessage(payload, userId, interactionId);
+          break;
         default:
           throw new BadRequestError(`Unsupported message type: ${messageType}`, ErrorCodes.INVALID_INPUT);
       }
@@ -107,14 +116,44 @@ export class MultimodalService {
       throw new BadRequestError('Text message cannot be empty', ErrorCodes.INVALID_INPUT);
     }
 
-    // Create memory in Mem0
+    // Detect mood from text content
+    const moodDetection = await this.moodDetectionService.detectMoodFromText(content);
+
+    // Extract tags including mood-based tags
+    const extractedTags = this.extractTags(content);
+    const moodTags = [
+      moodDetection.mood,
+      moodDetection.sentiment,
+      `intensity_${moodDetection.intensity}`,
+      ...moodDetection.themes
+    ];
+    const combinedTags = [...new Set([...extractedTags, ...moodTags])];
+
+    // Calculate importance with mood factor
+    const importance = this.calculateImportanceWithMood(content, moodDetection);
+
+    // Create memory in Mem0 with mood metadata
     const memoryId = await this.mem0Service.createMemory({
-      content: { text: content },
+      content: { 
+        text: content,
+        metadata: {
+          moodDetection,
+          enhancedWithAI: true
+        }
+      },
       userId,
       interactionId,
       memoryType: 'TEXT',
-      tags: this.extractTags(content),
-      importance: this.calculateImportance(content),
+      tags: combinedTags,
+      importance,
+    });
+
+    logger.info('Text message processed with mood detection', {
+      memoryId,
+      mood: moodDetection.mood,
+      confidence: moodDetection.confidence,
+      sentiment: moodDetection.sentiment,
+      intensity: moodDetection.intensity
     });
 
     return {
@@ -126,9 +165,12 @@ export class MultimodalService {
         source: 'whatsapp',
         messageSid: payload.MessageSid,
         timestamp: new Date().toISOString(),
+        moodDetection,
+        enhancedWithAI: true
       },
       userId,
       interactionId,
+      moodDetection,
     };
   }
 
@@ -160,10 +202,26 @@ export class MultimodalService {
     // Use AI-generated description if no caption provided
     const description = payload.Body || imageAnalysis.description;
     
-    // Combine user-provided tags with AI-extracted tags
+    // Detect mood from image analysis and user caption
+    const imageMoodDetection = await this.moodDetectionService.detectMoodFromImage(imageAnalysis);
+    let combinedMoodDetection = imageMoodDetection;
+    
+    // If user provided caption, also analyze text mood and combine
+    if (payload.Body && payload.Body.trim()) {
+      const textMoodDetection = await this.moodDetectionService.detectMoodFromText(payload.Body);
+      combinedMoodDetection = this.combineMoodDetections(textMoodDetection, imageMoodDetection);
+    }
+    
+    // Combine user-provided tags with AI-extracted tags and mood tags
     const userTags = this.extractTags(payload.Body || '');
     const aiTags = imageAnalysis.tags || [];
-    const combinedTags = [...new Set([...userTags, ...aiTags])]; // Remove duplicates
+    const moodTags = [
+      combinedMoodDetection.mood,
+      combinedMoodDetection.sentiment,
+      `intensity_${combinedMoodDetection.intensity}`,
+      ...combinedMoodDetection.themes
+    ];
+    const combinedTags = [...new Set([...userTags, ...aiTags, ...moodTags])]; // Remove duplicates
 
     // Create enhanced memory in Mem0
     const memoryId = await this.mem0Service.createMemory({
@@ -173,14 +231,16 @@ export class MultimodalService {
         metadata: {
           imageAnalysis,
           embedding: imageEmbedding,
+          moodDetection: combinedMoodDetection,
           aiGenerated: !payload.Body, // Flag if description was AI-generated
+          enhancedWithAI: true
         }
       },
       userId,
       interactionId,
       memoryType: 'IMAGE',
       tags: combinedTags,
-      importance: this.calculateImageImportance(description, imageAnalysis),
+      importance: this.calculateImportanceWithMood(description, combinedMoodDetection),
     });
 
     logger.info('Enhanced image processing completed', {
@@ -190,8 +250,10 @@ export class MultimodalService {
       aiDescription: imageAnalysis.description,
       detectedObjects: imageAnalysis.objects?.length || 0,
       extractedTags: aiTags.length,
-      mood: imageAnalysis.mood,
-      confidence: imageAnalysis.confidence
+      mood: combinedMoodDetection.mood,
+      moodConfidence: combinedMoodDetection.confidence,
+      sentiment: combinedMoodDetection.sentiment,
+      intensity: combinedMoodDetection.intensity
     });
 
     return {
@@ -214,10 +276,12 @@ export class MultimodalService {
         mediaUrls: [storedFile.fileUrl],
         imageAnalysis,
         embedding: imageEmbedding,
+        moodDetection: combinedMoodDetection,
         aiEnhanced: true,
       },
       userId,
       interactionId,
+      moodDetection: combinedMoodDetection,
     };
   }
 
@@ -243,15 +307,31 @@ export class MultimodalService {
     // Enhanced transcription with metadata
     const audioAnalysis = await this.openaiService.transcribeAudioWithMetadata(mediaBuffer, mediaFile.filename);
     
+    // Detect mood from audio analysis
+    const audioMoodDetection = await this.moodDetectionService.detectMoodFromAudio(audioAnalysis);
+    let combinedMoodDetection = audioMoodDetection;
+    
+    // If user provided caption, also analyze text mood and combine
+    if (payload.Body && payload.Body.trim()) {
+      const textMoodDetection = await this.moodDetectionService.detectMoodFromText(payload.Body);
+      combinedMoodDetection = this.combineMoodDetections(textMoodDetection, audioMoodDetection);
+    }
+    
     // Combine user-provided content with AI analysis
     const combinedContent = payload.Body 
       ? `${payload.Body}\n\n[Transcription: ${audioAnalysis.transcription}]`
       : audioAnalysis.transcription;
     
-    // Combine extracted tags with AI keywords
+    // Combine extracted tags with AI keywords and mood tags
     const userTags = this.extractTags(payload.Body || '');
     const aiKeywords = audioAnalysis.keywords || [];
-    const combinedTags = [...new Set([...userTags, ...aiKeywords])]; // Remove duplicates
+    const moodTags = [
+      combinedMoodDetection.mood,
+      combinedMoodDetection.sentiment,
+      `intensity_${combinedMoodDetection.intensity}`,
+      ...combinedMoodDetection.themes
+    ];
+    const combinedTags = [...new Set([...userTags, ...aiKeywords, ...moodTags])]; // Remove duplicates
     
     // Create enhanced memory in Mem0
     const memoryId = await this.mem0Service.createMemory({
@@ -260,14 +340,16 @@ export class MultimodalService {
         audioUrl: storedFile.fileUrl,
         metadata: {
           audioAnalysis,
+          moodDetection: combinedMoodDetection,
           enhancedTranscription: true,
+          enhancedWithAI: true
         }
       },
       userId,
       interactionId,
       memoryType: 'AUDIO',
       tags: combinedTags,
-      importance: this.calculateAudioImportance(audioAnalysis),
+      importance: this.calculateImportanceWithMood(audioAnalysis.transcription, combinedMoodDetection),
     });
 
     logger.info('Enhanced audio processing completed', {
@@ -276,8 +358,11 @@ export class MultimodalService {
       audioSize: mediaBuffer.length,
       transcriptionLength: audioAnalysis.transcription.length,
       language: audioAnalysis.language,
-      confidence: audioAnalysis.confidence,
-      sentiment: audioAnalysis.sentiment,
+      transcriptionConfidence: audioAnalysis.confidence,
+      audioSentiment: audioAnalysis.sentiment,
+      mood: combinedMoodDetection.mood,
+      moodConfidence: combinedMoodDetection.confidence,
+      intensity: combinedMoodDetection.intensity,
       keywordsCount: aiKeywords.length,
       duration: audioAnalysis.duration
     });
@@ -295,10 +380,12 @@ export class MultimodalService {
         transcription: audioAnalysis.transcription,
         timestamp: new Date().toISOString(),
         audioAnalysis,
+        moodDetection: combinedMoodDetection,
         aiEnhanced: true,
       },
       userId,
       interactionId,
+      moodDetection: combinedMoodDetection,
     };
   }
 
@@ -402,6 +489,200 @@ export class MultimodalService {
   }
 
   /**
+   * Process location message from WhatsApp
+   */
+  private async processLocationMessage(payload: TwilioWebhookPayload, userId: string, interactionId?: string): Promise<ProcessedMemory> {
+    try {
+      // Extract location data from WhatsApp payload
+      const latitude = payload.Latitude;
+      const longitude = payload.Longitude;
+      const address = payload.Label || payload.Body;
+
+      if (!latitude || !longitude) {
+        throw new BadRequestError('Location message missing coordinates', ErrorCodes.INVALID_INPUT);
+      }
+
+      logger.info('Processing location message', {
+        latitude,
+        longitude,
+        address,
+        messageSid: payload.MessageSid
+      });
+
+      // Extract location information using geo-tagging service
+      const locationInfo = await this.geoTaggingService.extractLocationFromWhatsApp(
+        latitude,
+        longitude,
+        address
+      );
+
+      // Create geo-tagged memory
+      const geoTaggedMemory = await this.geoTaggingService.createGeoTaggedMemory(locationInfo);
+
+      // Detect mood from location context and user message
+      let moodDetection: MoodDetection | undefined;
+      if (payload.Body && payload.Body.trim()) {
+        moodDetection = await this.moodDetectionService.detectMoodFromText(payload.Body);
+      }
+
+      // Also try to extract mood from location context (if it's a known emotional place)
+      const locationContextMood = this.extractMoodFromLocationContext(locationInfo, payload.Body);
+      if (locationContextMood && moodDetection) {
+        moodDetection = this.combineMoodDetections(moodDetection, locationContextMood);
+      } else if (locationContextMood && !moodDetection) {
+        moodDetection = locationContextMood;
+      }
+
+      // Create content description
+      let content = '';
+      if (payload.Body && payload.Body.trim()) {
+        content = payload.Body;
+      } else if (locationInfo.placeName) {
+        content = `📍 Location: ${locationInfo.placeName}`;
+      } else if (locationInfo.address) {
+        content = `📍 Location: ${locationInfo.address}`;
+      } else {
+        content = `📍 Location: ${latitude}, ${longitude}`;
+      }
+
+      // Combine tags from location and mood
+      const locationTags = geoTaggedMemory.locationTags;
+      const moodTags = moodDetection ? [
+        moodDetection.mood,
+        moodDetection.sentiment,
+        `intensity_${moodDetection.intensity}`,
+        ...moodDetection.themes
+      ] : [];
+      const combinedTags = [...new Set([...locationTags, ...moodTags])];
+
+      // Calculate importance with location and mood factors
+      let importance = 3; // Base importance for location memories
+      if (geoTaggedMemory.distanceFromHome !== undefined) {
+        if (geoTaggedMemory.distanceFromHome > 100) importance += 2; // Distant locations are more noteworthy
+        else if (geoTaggedMemory.distanceFromHome < 1) importance += 1; // Very close to home
+      }
+      if (moodDetection) {
+        importance = this.calculateImportanceWithMood(content, moodDetection);
+      }
+
+      // Create memory in Mem0
+      const memoryId = await this.mem0Service.createMemory({
+        content: { 
+          text: content,
+          metadata: {
+            locationInfo,
+            geoTaggedMemory,
+            moodDetection,
+            coordinates: {
+              latitude: locationInfo.latitude,
+              longitude: locationInfo.longitude
+            },
+            enhancedWithAI: true
+          }
+        },
+        userId,
+        interactionId,
+        memoryType: 'MIXED', // Location memories are mixed type
+        tags: combinedTags,
+        importance,
+      });
+
+      logger.info('Location message processed successfully', {
+        memoryId,
+        coordinates: `${locationInfo.latitude}, ${locationInfo.longitude}`,
+        address: locationInfo.address,
+        placeName: locationInfo.placeName,
+        distanceFromHome: geoTaggedMemory.distanceFromHome,
+        locationConfidence: locationInfo.locationConfidence,
+        mood: moodDetection?.mood,
+        tagsCount: combinedTags.length
+      });
+
+      return {
+        id: memoryId,
+        content,
+        memoryType: 'MIXED',
+        mediaFiles: [],
+        metadata: {
+          source: 'whatsapp',
+          messageSid: payload.MessageSid,
+          timestamp: new Date().toISOString(),
+          locationInfo,
+          geoTaggedMemory,
+          moodDetection,
+          aiEnhanced: true,
+        },
+        userId,
+        interactionId,
+        moodDetection,
+        geoTagging: geoTaggedMemory,
+      };
+
+    } catch (error) {
+      logger.error('Error processing location message', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        messageSid: payload.MessageSid,
+        userId,
+        interactionId,
+      });
+      throw new BadRequestError(
+        `Failed to process location message: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        ErrorCodes.LOCATION_ERROR
+      );
+    }
+  }
+
+  /**
+   * Extract mood from location context
+   */
+  private extractMoodFromLocationContext(locationInfo: LocationInfo, userMessage?: string): MoodDetection | null {
+    // Simple location-based mood detection
+    const locationText = `${locationInfo.placeName || ''} ${locationInfo.address || ''} ${userMessage || ''}`.toLowerCase();
+    
+    // Happy places
+    if (locationText.includes('beach') || locationText.includes('vacation') || 
+        locationText.includes('party') || locationText.includes('celebration') ||
+        locationText.includes('restaurant') || locationText.includes('cafe')) {
+      return {
+        mood: 'happy',
+        confidence: 0.6,
+        emotionalIndicators: ['location_context'],
+        intensity: 'medium',
+        sentiment: 'positive',
+        themes: ['leisure', 'social']
+      };
+    }
+
+    // Work/stress places
+    if (locationText.includes('office') || locationText.includes('work') ||
+        locationText.includes('meeting') || locationText.includes('hospital')) {
+      return {
+        mood: 'neutral',
+        confidence: 0.5,
+        emotionalIndicators: ['work_context'],
+        intensity: 'medium',
+        sentiment: 'neutral',
+        themes: ['work', 'obligation']
+      };
+    }
+
+    // Peaceful places
+    if (locationText.includes('home') || locationText.includes('park') ||
+        locationText.includes('garden') || locationText.includes('library')) {
+      return {
+        mood: 'neutral',
+        confidence: 0.5,
+        emotionalIndicators: ['peaceful_context'],
+        intensity: 'low',
+        sentiment: 'neutral',
+        themes: ['peaceful', 'comfortable']
+      };
+    }
+
+    return null;
+  }
+
+  /**
    * Search memories using natural language query
    */
   async searchMemories(query: string, userId?: string, limit: number = 10): Promise<ProcessedMemory[]> {
@@ -443,7 +724,7 @@ export class MultimodalService {
   /**
    * Health check for multimodal service
    */
-  async healthCheck(): Promise<{ status: string; details?: any }> {
+  async healthCheck(): Promise<{ status: string; details?: Record<string, unknown> }> {
     try {
       const mem0Health = await this.mem0Service.healthCheck();
       const twilioHealth = await this.twilioService.healthCheck();
@@ -506,6 +787,57 @@ export class MultimodalService {
     return tags;
   }
 
+  /**
+   * Combine mood detections from different sources (text + image/audio)
+   */
+  private combineMoodDetections(primary: MoodDetection, secondary: MoodDetection): MoodDetection {
+    // Use the mood detection with higher confidence as primary
+    if (secondary.confidence > primary.confidence) {
+      [primary, secondary] = [secondary, primary];
+    }
+
+    // Combine emotional indicators
+    const combinedIndicators = [...new Set([
+      ...primary.emotionalIndicators,
+      ...secondary.emotionalIndicators
+    ])].slice(0, 10);
+
+    // Combine themes
+    const combinedThemes = [...new Set([
+      ...primary.themes,
+      ...secondary.themes
+    ])].slice(0, 5);
+
+    // Average confidence with primary bias
+    const combinedConfidence = Math.min(
+      (primary.confidence * 0.7) + (secondary.confidence * 0.3),
+      0.95
+    );
+
+    // Use primary mood but increase intensity if both are high
+    let combinedIntensity = primary.intensity;
+    if (primary.intensity === 'high' || secondary.intensity === 'high') {
+      combinedIntensity = 'high';
+    } else if (primary.intensity === 'medium' || secondary.intensity === 'medium') {
+      combinedIntensity = 'medium';
+    }
+
+    // Combine sentiments (primary takes precedence unless neutral)
+    let combinedSentiment = primary.sentiment;
+    if (primary.sentiment === 'neutral' && secondary.sentiment !== 'neutral') {
+      combinedSentiment = secondary.sentiment;
+    }
+
+    return {
+      mood: primary.mood,
+      confidence: combinedConfidence,
+      emotionalIndicators: combinedIndicators,
+      intensity: combinedIntensity,
+      sentiment: combinedSentiment,
+      themes: combinedThemes
+    };
+  }
+
   private calculateImportance(content: string): number {
     // Simple importance calculation based on content characteristics
     let importance = 1;
@@ -528,27 +860,77 @@ export class MultimodalService {
   }
 
   /**
+   * Calculate importance with mood detection factors
+   */
+  private calculateImportanceWithMood(content: string, moodDetection: MoodDetection): number {
+    let importance = this.calculateImportance(content);
+
+    // Mood-based importance adjustments
+    switch (moodDetection.mood) {
+      case 'stressed':
+      case 'anxious':
+      case 'angry':
+        importance += 2; // High emotional states are important
+        break;
+      case 'sad':
+        importance += 1; // Sad content should be tracked
+        break;
+      case 'excited':
+      case 'happy':
+        importance += 1; // Positive milestones are important
+        break;
+      case 'grateful':
+        importance += 0.5; // Gratitude is meaningful
+        break;
+    }
+
+    // Intensity adjustments
+    switch (moodDetection.intensity) {
+      case 'high':
+        importance += 1;
+        break;
+      case 'medium':
+        importance += 0.5;
+        break;
+    }
+
+    // Confidence adjustments
+    if (moodDetection.confidence > 0.8) {
+      importance += 0.5; // High confidence in mood detection
+    }
+
+    // Theme-based adjustments
+    if (moodDetection.themes.includes('work')) importance += 0.5;
+    if (moodDetection.themes.includes('health')) importance += 1;
+    if (moodDetection.themes.includes('relationships')) importance += 0.5;
+    if (moodDetection.themes.includes('financial')) importance += 0.5;
+
+    // Cap importance at 10
+    return Math.min(importance, 10);
+  }
+
+  /**
    * Calculate importance for image memories based on AI analysis
    */
-  private calculateImageImportance(description: string, imageAnalysis: any): number {
+  private calculateImageImportance(description: string, imageAnalysis: Record<string, unknown>): number {
     let importance = this.calculateImportance(description);
 
     // Boost importance based on AI confidence
-    if (imageAnalysis.confidence > 0.9) importance += 1;
+    if ((imageAnalysis['confidence'] as number) > 0.9) importance += 1;
     
     // Boost importance for people/faces
-    if (imageAnalysis.objects?.some((obj: string) => ['person', 'people', 'face'].includes(obj.toLowerCase()))) {
+    if ((imageAnalysis['objects'] as string[])?.some((obj: string) => ['person', 'people', 'face'].includes(obj.toLowerCase()))) {
       importance += 1;
     }
 
     // Boost importance for special occasions/events
     const eventTags = ['birthday', 'wedding', 'graduation', 'celebration', 'anniversary'];
-    if (imageAnalysis.tags?.some((tag: string) => eventTags.includes(tag.toLowerCase()))) {
+    if ((imageAnalysis['tags'] as string[])?.some((tag: string) => eventTags.includes(tag.toLowerCase()))) {
       importance += 2;
     }
 
     // Boost importance for positive emotions
-    if (imageAnalysis.mood === 'happy' || imageAnalysis.mood === 'excited') {
+    if (imageAnalysis['mood'] === 'happy' || imageAnalysis['mood'] === 'excited') {
       importance += 1;
     }
 
@@ -558,25 +940,25 @@ export class MultimodalService {
   /**
    * Calculate importance for audio memories based on AI analysis
    */
-  private calculateAudioImportance(audioAnalysis: any): number {
-    let importance = this.calculateImportance(audioAnalysis.transcription);
+  private calculateAudioImportance(audioAnalysis: Record<string, unknown>): number {
+    let importance = this.calculateImportance(audioAnalysis['transcription'] as string);
 
     // Boost importance based on transcription confidence
-    if (audioAnalysis.confidence && audioAnalysis.confidence > 0.9) importance += 1;
+    if (audioAnalysis['confidence'] && (audioAnalysis['confidence'] as number) > 0.9) importance += 1;
 
     // Boost importance for longer audio (more content)
-    if (audioAnalysis.duration > 30) importance += 1; // > 30 seconds
-    if (audioAnalysis.duration > 120) importance += 1; // > 2 minutes
+    if ((audioAnalysis['duration'] as number) > 30) importance += 1; // > 30 seconds
+    if ((audioAnalysis['duration'] as number) > 120) importance += 1; // > 2 minutes
 
     // Boost importance for positive sentiment
-    if (audioAnalysis.sentiment === 'positive') importance += 1;
+    if (audioAnalysis['sentiment'] === 'positive') importance += 1;
 
     // Boost importance for multiple speakers (meetings/conversations)
-    if (audioAnalysis.speakers > 1) importance += 1;
+    if ((audioAnalysis['speakers'] as number) > 1) importance += 1;
 
     // Boost importance for meeting/appointment keywords
     const meetingKeywords = ['meeting', 'appointment', 'call', 'conference', 'discussion'];
-    if (audioAnalysis.keywords?.some((keyword: string) => 
+    if ((audioAnalysis['keywords'] as string[])?.some((keyword: string) => 
       meetingKeywords.includes(keyword.toLowerCase()))) {
       importance += 1;
     }

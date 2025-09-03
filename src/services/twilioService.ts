@@ -41,6 +41,10 @@ export interface TwilioWebhookPayload {
   MediaSid9?: string;
   Timestamp: string;
   AccountSid: string;
+  // Location message fields
+  Latitude?: string;
+  Longitude?: string;
+  Label?: string;
 }
 
 export interface MediaFile {

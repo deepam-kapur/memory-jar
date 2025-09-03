@@ -1,68 +1,111 @@
 import { Router } from 'express';
-import { ReminderController } from '../controllers/reminderController';
+import { asyncHandler } from '../middleware/errorHandler';
 import { validate } from '../middleware/validation';
-import { z } from 'zod';
+import { apiLimiter } from '../middleware/rateLimit';
+import { ReminderController } from '../controllers/reminderController';
+import { 
+  createReminderSchema,
+  cancelReminderSchema,
+  getReminderSchema,
+  paginationSchema 
+} from '../validation/schemas';
 
 const router = Router();
 
-// Validation schemas
-const createReminderSchema = z.object({
-  body: z.object({
-    userId: z.string().min(1),
-    memoryId: z.string().min(1),
-    message: z.string().min(1),
-    scheduledFor: z.string().datetime().optional(),
-    naturalLanguageTime: z.string().optional(),
-    timezone: z.string().optional(),
-  }).refine(
-    (data) => data.scheduledFor || data.naturalLanguageTime,
-    {
-      message: "Either scheduledFor or naturalLanguageTime must be provided",
-    }
-  ),
-});
+/**
+ * POST /reminders
+ * Create a scheduled reminder
+ * 
+ * Creates a new reminder linked to a memory that will be sent 
+ * at the specified time via WhatsApp.
+ */
+router.post(
+  '/',
+  apiLimiter,
+  validate(createReminderSchema, 'body'),
+  asyncHandler(ReminderController.createReminder)
+);
 
-const getUserRemindersSchema = z.object({
-  query: z.object({
-    userId: z.string().min(1),
-    status: z.enum(['PENDING', 'SENT', 'CANCELLED']).optional(),
-  }),
-});
+/**
+ * GET /reminders
+ * Get user's reminders with optional filtering
+ * 
+ * Returns reminders for a user with optional status filtering
+ * and pagination support.
+ */
+router.get(
+  '/',
+  apiLimiter,
+  validate(getReminderSchema, 'query'),
+  asyncHandler(ReminderController.getUserReminders)
+);
 
-const cancelReminderSchema = z.object({
-  params: z.object({
-    reminderId: z.string().min(1),
-  }),
-  body: z.object({
-    userId: z.string().min(1),
-  }),
-});
+/**
+ * GET /reminders/stats
+ * Get reminder statistics for analytics
+ * 
+ * Returns comprehensive statistics about reminders including
+ * counts by status, upcoming reminders, and success rates.
+ */
+router.get(
+  '/stats',
+  apiLimiter,
+  asyncHandler(ReminderController.getReminderStats)
+);
 
-const reminderStatsSchema = z.object({
-  query: z.object({
-    userId: z.string().optional(),
-  }),
-});
+/**
+ * POST /reminders/parse
+ * Parse natural language time and create reminder
+ * 
+ * Accepts natural language time expressions like "tomorrow at 3 PM"
+ * and creates a reminder for the specified memory.
+ */
+router.post(
+  '/parse',
+  apiLimiter,
+  validate(createReminderSchema, 'body'),
+  asyncHandler(ReminderController.parseAndCreateReminder)
+);
 
-const createReminderFromMemorySchema = z.object({
-  params: z.object({
-    memoryId: z.string().min(1),
-  }),
-  body: z.object({
-    userId: z.string().min(1),
-    timeExpression: z.string().min(1),
-    customMessage: z.string().optional(),
-  }),
-});
+/**
+ * PATCH /reminders/:id/cancel
+ * Cancel a pending reminder
+ * 
+ * Cancels a pending reminder, preventing it from being sent.
+ * Only works for reminders in PENDING status.
+ */
+router.patch(
+  '/:id/cancel',
+  apiLimiter,
+  validate(cancelReminderSchema, 'params'),
+  asyncHandler(ReminderController.cancelReminder)
+);
 
-// Routes
-router.post('/', validate(createReminderSchema.shape.body), ReminderController.createReminder);
-router.get('/', validate(getUserRemindersSchema.shape.query, 'query'), ReminderController.getUserReminders);
-router.delete('/:reminderId', validate(cancelReminderSchema.shape.body), ReminderController.cancelReminder);
-router.get('/stats', validate(reminderStatsSchema.shape.query, 'query'), ReminderController.getReminderStats);
-router.post('/process', ReminderController.processReminders);
+/**
+ * GET /reminders/upcoming
+ * Get upcoming reminders (next 24 hours)
+ * 
+ * Returns reminders scheduled for the next 24 hours,
+ * useful for dashboard displays and quick overviews.
+ */
+router.get(
+  '/upcoming',
+  apiLimiter,
+  validate(paginationSchema, 'query'),
+  asyncHandler(ReminderController.getUpcomingReminders)
+);
 
-// Create reminder from memory
-router.post('/memories/:memoryId', validate(createReminderFromMemorySchema.shape.body), ReminderController.createReminderFromMemory);
+/**
+ * GET /reminders/health
+ * Health check for reminder service
+ * 
+ * Returns the health status of the reminder service including
+ * background job status and processing statistics.
+ */
+router.get(
+  '/health',
+  apiLimiter,
+  asyncHandler(ReminderController.getServiceHealth)
+);
 
 export default router;

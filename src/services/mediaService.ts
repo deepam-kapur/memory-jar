@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { getDatabase } from './database';
 import { getLocalStorageService, StoredFile } from './localStorageService';
+import { getTwilioService } from './twilioService';
 import { Prisma } from '../generated/prisma';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
@@ -281,35 +282,156 @@ export class MediaService {
     contentType: string,
     originalName: string,
     interactionId?: string,
-    memoryId?: string
+    memoryId?: string,
+    transcription?: string,
+    metadata?: Record<string, any>
   ): Promise<MediaFile> {
     try {
-      logger.debug('Downloading media from URL', { mediaUrl, contentType });
+      logger.info('Starting media download and storage', { 
+        mediaUrl: mediaUrl.substring(0, 50) + '...', 
+        contentType, 
+        originalName 
+      });
 
-      // TODO: Implement actual download logic (will be implemented in Phase 3)
-      // For now, create a placeholder buffer
-      const buffer = Buffer.from('placeholder media content');
+      // Download media using appropriate service based on URL
+      let buffer: Buffer;
+      
+      if (mediaUrl.includes('twilio.com') || mediaUrl.includes('api.twilio.com')) {
+        // Use Twilio service for Twilio media URLs
+        const twilioService = getTwilioService();
+        buffer = await twilioService.downloadMedia(mediaUrl);
+        logger.debug('Media downloaded via Twilio service', { 
+          size: buffer.length,
+          contentType 
+        });
+      } else {
+        // Use standard HTTP fetch for other URLs
+        buffer = await this.downloadFromUrl(mediaUrl);
+        logger.debug('Media downloaded via HTTP fetch', { 
+          size: buffer.length,
+          contentType 
+        });
+      }
+
+      // Validate downloaded content
+      if (buffer.length === 0) {
+        throw new Error('Downloaded file is empty');
+      }
+
+      // Verify content type if possible
+      const detectedContentType = this.detectContentType(buffer, contentType);
+      const finalContentType = detectedContentType || contentType;
+
+      logger.info('Media download completed successfully', {
+        originalUrl: mediaUrl.substring(0, 50) + '...',
+        downloadSize: buffer.length,
+        originalContentType: contentType,
+        detectedContentType: finalContentType,
+        originalName
+      });
       
       // Store with deduplication
       return await this.storeMedia(
         userId,
         buffer,
-        contentType,
+        finalContentType,
         originalName,
         interactionId,
-        memoryId
+        memoryId,
+        transcription,
+        {
+          ...metadata,
+          originalUrl: mediaUrl,
+          downloadTimestamp: new Date().toISOString(),
+          downloadSize: buffer.length
+        }
       );
 
     } catch (error) {
       logger.error('Error downloading and storing media', {
-        mediaUrl,
+        mediaUrl: mediaUrl.substring(0, 50) + '...',
+        contentType,
+        originalName,
         error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
       });
       throw new BadRequestError(
         `Failed to download media: ${error instanceof Error ? error.message : 'Unknown error'}`,
         ErrorCodes.FILE_UPLOAD_ERROR
       );
     }
+  }
+
+  /**
+   * Download media from a standard HTTP URL
+   */
+  private static async downloadFromUrl(url: string): Promise<Buffer> {
+    try {
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (error) {
+      logger.error('Error downloading from URL', {
+        url: url.substring(0, 50) + '...',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Detect content type from buffer content
+   */
+  private static detectContentType(buffer: Buffer, fallbackType: string): string {
+    if (buffer.length < 4) {
+      return fallbackType;
+    }
+
+    // Check common file signatures
+    const signatures: Record<string, string> = {
+      // Images
+      'ffd8ff': 'image/jpeg',
+      '89504e47': 'image/png',
+      '47494638': 'image/gif',
+      '52494646': 'image/webp', // Actually RIFF, but WebP uses RIFF
+      
+      // Audio
+      '494433': 'audio/mpeg', // MP3
+      'fff1': 'audio/aac', // AAC
+      'fff9': 'audio/aac', // AAC
+      '4f676753': 'audio/ogg', // OGG
+      
+      // Video
+      '00000020667479704d534e56': 'video/mp4', // MP4
+      '1a45dfa3': 'video/webm', // WebM
+      
+      // Documents
+      '25504446': 'application/pdf', // PDF
+      'd0cf11e0': 'application/msword', // DOC
+    };
+
+    // Convert first few bytes to hex
+    const hex = buffer.subarray(0, 12).toString('hex').toLowerCase();
+    
+    // Check signatures
+    for (const [signature, mimeType] of Object.entries(signatures)) {
+      if (hex.startsWith(signature)) {
+        logger.debug('Content type detected from file signature', {
+          signature,
+          detectedType: mimeType,
+          fallbackType
+        });
+        return mimeType;
+      }
+    }
+
+    // Return fallback type if no signature matched
+    return fallbackType;
   }
 
   /**

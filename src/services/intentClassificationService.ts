@@ -2,7 +2,7 @@ import { getOpenAIService } from './openaiService';
 import logger from '../config/logger';
 
 export interface IntentClassification {
-  intent: 'MEMORY_CREATION' | 'MEMORY_QUERY' | 'LIST_COMMAND' | 'GREETING' | 'UNKNOWN';
+  intent: 'MEMORY_CREATION' | 'MEMORY_QUERY' | 'LIST_COMMAND' | 'REMINDER_CREATION' | 'GREETING' | 'UNKNOWN';
   confidence: number;
   reasoning?: string;
   extractedInfo?: {
@@ -10,6 +10,8 @@ export interface IntentClassification {
     urgency?: 'low' | 'medium' | 'high';
     timeframe?: string;
     keywords?: string[];
+    reminderTime?: string;
+    reminderMessage?: string;
   };
 }
 
@@ -71,30 +73,37 @@ Classification Rules:
    - Key: User is providing NEW information they want stored for future reference
    - Pattern: Usually starts with "Remember", "Don't forget", "Note that", or states a fact/task to remember
 
-            2. MEMORY_QUERY: User wants to search/find/recall EXISTING memories
-               - Examples: "What did I plan for tomorrow?", "Show me my memories about dry cleaning", "Find my notes about groceries", "What are my tasks for today?", "What did I say about not loving my haircut?"
-               - Key: User is asking to retrieve information they previously stored using question words (what, when, where, show, find, did)
-               - IMPORTANT: Questions starting with "What did I..." or "What do I need to remember about X?" are QUERIES asking to recall existing memories, NOT memory creation
-               - Pattern: Questions asking about past statements or memories are always QUERIES
+2. MEMORY_QUERY: User wants to search/find/recall EXISTING memories
+   - Examples: "What did I plan for tomorrow?", "Show me my memories about dry cleaning", "Find my notes about groceries", "What are my tasks for today?", "What did I say about not loving my haircut?"
+   - Key: User is asking to retrieve information they previously stored using question words (what, when, where, show, find, did)
+   - IMPORTANT: Questions starting with "What did I..." or "What do I need to remember about X?" are QUERIES asking to recall existing memories, NOT memory creation
+   - Pattern: Questions asking about past statements or memories are always QUERIES
+
+3. REMINDER_CREATION: User wants to create a scheduled reminder
+   - Examples: "Remind me tomorrow at 3pm", "Set a reminder for next week", "Alert me about this in 2 hours", "Remind me to call mom tomorrow"
+   - Key: User explicitly wants to be reminded about something at a future time
+   - Pattern: Contains "remind me", "set reminder", "alert me", with time references
    
-3. LIST_COMMAND: User wants to see all memories
+4. LIST_COMMAND: User wants to see all memories
    - Examples: "/list", "list all", "show all memories"
    
-4. GREETING: Simple greetings or social messages
+5. GREETING: Simple greetings or social messages
    - Examples: "Hi", "Hello", "How are you", "Thanks"
    
-5. UNKNOWN: Cannot determine clear intent
+6. UNKNOWN: Cannot determine clear intent
 
 Respond with ONLY a JSON object in this exact format:
 {
-  "intent": "MEMORY_CREATION|MEMORY_QUERY|LIST_COMMAND|GREETING|UNKNOWN",
+  "intent": "MEMORY_CREATION|MEMORY_QUERY|LIST_COMMAND|REMINDER_CREATION|GREETING|UNKNOWN",
   "confidence": 0.0-1.0,
   "reasoning": "Brief explanation of why you chose this classification",
   "extractedInfo": {
     "memoryType": "reminder|note|fact|personal",
     "urgency": "low|medium|high",
     "timeframe": "extracted time information if any",
-    "keywords": ["key", "words", "from", "message"]
+    "keywords": ["key", "words", "from", "message"],
+    "reminderTime": "time expression for reminders (e.g., 'tomorrow at 3pm')",
+    "reminderMessage": "what to remind about"
   }
 }`;
 
@@ -167,6 +176,39 @@ Respond with ONLY a JSON object in this exact format:
         intent: 'GREETING',
         confidence: 0.9,
         reasoning: 'Common greeting pattern detected'
+      };
+    }
+
+    // Reminder creation indicators
+    if (lowerMessage.includes('remind me') ||
+        lowerMessage.includes('set a reminder') ||
+        lowerMessage.includes('alert me') ||
+        lowerMessage.includes('notify me') ||
+        (lowerMessage.includes('remind') && (lowerMessage.includes('tomorrow') || lowerMessage.includes('later') || lowerMessage.includes('next')))) {
+      
+      // Extract time information
+      const timeKeywords = ['tomorrow', 'later', 'next week', 'next month', 'tonight', 'morning', 'afternoon', 'evening', 'pm', 'am'];
+      const timeframe = timeKeywords.find(keyword => lowerMessage.includes(keyword)) || 'unspecified';
+      
+      // Extract reminder message (simple extraction)
+      let reminderMessage = message;
+      if (lowerMessage.includes('remind me to ')) {
+        reminderMessage = message.substring(message.toLowerCase().indexOf('remind me to ') + 13);
+      } else if (lowerMessage.includes('remind me ')) {
+        reminderMessage = message.substring(message.toLowerCase().indexOf('remind me ') + 10);
+      }
+      
+      return {
+        intent: 'REMINDER_CREATION',
+        confidence: 0.85,
+        reasoning: 'Reminder creation pattern detected',
+        extractedInfo: {
+          memoryType: 'reminder',
+          timeframe,
+          reminderTime: timeframe,
+          reminderMessage: reminderMessage.trim(),
+          keywords: lowerMessage.split(' ').filter(word => word.length > 3)
+        }
       };
     }
 
