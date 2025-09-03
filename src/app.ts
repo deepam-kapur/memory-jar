@@ -43,7 +43,7 @@ app.use(cors({
 }));
 
 // Request timeout handler
-app.use(timeoutHandler(30000)); // 30 seconds
+app.use(timeoutHandler(300000)); // 30 seconds
 
 // Request logging
 app.use(morgan(isDevelopment ? 'dev' : 'combined'));
@@ -135,18 +135,18 @@ const server = app.listen(env.PORT, env.HOST, async () => {
   // Initialize database
   try {
     initializeDatabase();
-    // eslint-disable-next-line no-console
+     
     console.log('✅ Database initialized');
   } catch (error) {
-    // eslint-disable-next-line no-console
+     
     console.error('❌ Failed to initialize database:', error);
   }
 
-  // eslint-disable-next-line no-console
+   
   console.log(`🚀 Memory Jar server running on http://${env.HOST}:${env.PORT}`);
-  // eslint-disable-next-line no-console
+   
   console.log(`📊 Environment: ${env.NODE_ENV}`);
-  // eslint-disable-next-line no-console
+   
   console.log(`🔧 Node version: ${process.version}`);
 });
 

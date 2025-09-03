@@ -285,7 +285,7 @@ export class Mem0Service {
     const results: MemorySearchResult[] = [];
     const queryLower = query.toLowerCase();
 
-    for (const [id, memory] of this.memoryStore) {
+    for (const [, memory] of this.memoryStore) {
       // Filter by userId if provided
       if (userId && memory.metadata.userId !== userId) {
         continue;
@@ -367,7 +367,7 @@ export class Mem0Service {
   private getMemoriesFallback(userId: string, limit: number = 50): MemorySearchResult[] {
     const results: MemorySearchResult[] = [];
 
-    for (const [id, memory] of this.memoryStore) {
+    for (const [, memory] of this.memoryStore) {
       if (memory.metadata.userId === userId) {
         results.push({
           id: memory.id,
