@@ -139,7 +139,7 @@ export class TimezoneService {
   /**
    * Get start of day in user's timezone
    */
-  private startOfDay(date: Date, timezone: string): Date {
+  private startOfDay(date: Date, _timezone: string): Date {
     const result = new Date(date);
     result.setHours(0, 0, 0, 0);
     return result;
@@ -148,7 +148,7 @@ export class TimezoneService {
   /**
    * Get end of day in user's timezone
    */
-  private endOfDay(date: Date, timezone: string): Date {
+  private endOfDay(date: Date, _timezone: string): Date {
     const result = new Date(date);
     result.setHours(23, 59, 59, 999);
     return result;
@@ -157,7 +157,7 @@ export class TimezoneService {
   /**
    * Get start of week in user's timezone
    */
-  private startOfWeek(date: Date, timezone: string): Date {
+  private startOfWeek(date: Date, _timezone: string): Date {
     const result = new Date(date);
     const day = result.getDay();
     const diff = result.getDate() - day;
@@ -169,7 +169,7 @@ export class TimezoneService {
   /**
    * Get start of month in user's timezone
    */
-  private startOfMonth(date: Date, timezone: string): Date {
+  private startOfMonth(date: Date, _timezone: string): Date {
     const result = new Date(date);
     result.setDate(1);
     result.setHours(0, 0, 0, 0);
@@ -179,7 +179,7 @@ export class TimezoneService {
   /**
    * Get end of month in user's timezone
    */
-  private endOfMonth(date: Date, timezone: string): Date {
+  private endOfMonth(date: Date, _timezone: string): Date {
     const result = new Date(date);
     result.setMonth(result.getMonth() + 1);
     result.setDate(0);
@@ -206,7 +206,7 @@ export class TimezoneService {
    * Convert UTC date to user's timezone
    */
   async convertToUserTimezone(date: Date, userId: string): Promise<Date> {
-    const userTimezone = await this.getUserTimezone(userId);
+    // const userTimezone = await this.getUserTimezone(userId); // TODO: Use for proper timezone conversion
     // Simple conversion - in production would use proper timezone library
     return date;
   }

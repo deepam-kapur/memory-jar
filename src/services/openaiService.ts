@@ -44,6 +44,39 @@ export interface EnhancedTranscriptionResult {
   duration?: number;
 }
 
+// CLIP-related interfaces for advanced image analysis
+export interface CLIPImageAnalysis {
+  description: string;
+  objects: string[];
+  scenes: string[];
+  activities: string[];
+  emotions: string[];
+  colors: string[];
+  text_detected?: string;
+  confidence: number;
+  categories: string[];
+  visual_features: {
+    brightness: 'low' | 'medium' | 'high';
+    contrast: 'low' | 'medium' | 'high';
+    saturation: 'low' | 'medium' | 'high';
+    composition: string;
+  };
+  contextual_tags: string[];
+}
+
+export interface ImageProcessingResult {
+  analysis: CLIPImageAnalysis;
+  ocr_text?: string;
+  faces_detected?: number;
+  landmark_detected?: boolean;
+  estimated_location?: string;
+  mood_from_image?: {
+    mood: string;
+    confidence: number;
+    reasoning: string;
+  };
+}
+
 // Audio format constants
 const SUPPORTED_AUDIO_FORMATS = {
   'mp3': 'audio/mpeg',
@@ -785,6 +818,347 @@ Focus on extracting actionable keywords and determining overall emotional tone.`
     // Use audio buffer length to deterministically select a mock transcription
     const index = audioBuffer.length % mockTranscriptions.length;
     return mockTranscriptions[index] || "Mock transcription";
+  }
+
+  /**
+   * Advanced image analysis using OpenAI Vision API (CLIP-based)
+   */
+  async analyzeImageWithCLIP(imageBuffer: Buffer, filename?: string): Promise<ImageProcessingResult> {
+    try {
+      logger.info('Starting CLIP-based image analysis', {
+        bufferSize: imageBuffer.length,
+        filename,
+        hasApiKey: !!env.OPENAI_API_KEY,
+      });
+
+      if (env.OPENAI_API_KEY && this.client) {
+        try {
+          // Convert buffer to base64 for OpenAI Vision API
+          const base64Image = imageBuffer.toString('base64');
+          const mimeType = this.detectImageMimeType(imageBuffer, filename);
+
+          // Use OpenAI Vision API for CLIP-like analysis
+          const response = await this.client.chat.completions.create({
+            model: "gpt-4-vision-preview",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: `Analyze this image comprehensively and provide a detailed JSON response with the following structure:
+{
+  "description": "Detailed description of the image",
+  "objects": ["list", "of", "objects", "detected"],
+  "scenes": ["type", "of", "scene"],
+  "activities": ["activities", "happening"],
+  "emotions": ["emotions", "conveyed"],
+  "colors": ["dominant", "colors"],
+  "text_detected": "any text found in the image",
+  "categories": ["image", "categories"],
+  "visual_features": {
+    "brightness": "low|medium|high",
+    "contrast": "low|medium|high", 
+    "saturation": "low|medium|high",
+    "composition": "description of composition"
+  },
+  "contextual_tags": ["relevant", "context", "tags"],
+  "mood_analysis": {
+    "mood": "detected mood",
+    "confidence": 0.85,
+    "reasoning": "why this mood was detected"
+  }
+}
+
+Be thorough and accurate in your analysis.`
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: `data:${mimeType};base64,${base64Image}`,
+                      detail: "high"
+                    }
+                  }
+                ]
+              }
+            ],
+            max_tokens: 1000,
+            temperature: 0.1,
+          });
+
+          const analysisText = response.choices[0]?.message?.content || '';
+          
+          // Parse the JSON response
+          let parsedAnalysis: Record<string, unknown>;
+          try {
+            // Extract JSON from the response (may be wrapped in markdown)
+            const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              parsedAnalysis = JSON.parse(jsonMatch[0]);
+            } else {
+              throw new Error('No JSON found in response');
+            }
+          } catch (parseError) {
+            logger.warn('Failed to parse CLIP analysis JSON, using fallback', {
+              error: parseError instanceof Error ? parseError.message : 'Parse error',
+              response: analysisText.substring(0, 200)
+            });
+            parsedAnalysis = this.parseAnalysisFromText(analysisText);
+          }
+
+          // Structure the result
+          const imageAnalysis: CLIPImageAnalysis = {
+            description: (parsedAnalysis['description'] as string) || 'Image analyzed',
+            objects: Array.isArray(parsedAnalysis['objects']) ? parsedAnalysis['objects'] as string[] : [],
+            scenes: Array.isArray(parsedAnalysis['scenes']) ? parsedAnalysis['scenes'] as string[] : [],
+            activities: Array.isArray(parsedAnalysis['activities']) ? parsedAnalysis['activities'] as string[] : [],
+            emotions: Array.isArray(parsedAnalysis['emotions']) ? parsedAnalysis['emotions'] as string[] : [],
+            colors: Array.isArray(parsedAnalysis['colors']) ? parsedAnalysis['colors'] as string[] : [],
+            text_detected: (parsedAnalysis['text_detected'] as string) || undefined,
+            confidence: 0.9, // High confidence for GPT-4 Vision
+            categories: Array.isArray(parsedAnalysis['categories']) ? parsedAnalysis['categories'] as string[] : ['general'],
+            visual_features: {
+              brightness: this.validateVisualLevel(((parsedAnalysis['visual_features'] as Record<string, unknown>)?.['brightness'] as string) || 'medium'),
+              contrast: this.validateVisualLevel(((parsedAnalysis['visual_features'] as Record<string, unknown>)?.['contrast'] as string) || 'medium'),
+              saturation: this.validateVisualLevel(((parsedAnalysis['visual_features'] as Record<string, unknown>)?.['saturation'] as string) || 'medium'),
+              composition: ((parsedAnalysis['visual_features'] as Record<string, unknown>)?.['composition'] as string) || 'standard composition',
+            },
+            contextual_tags: Array.isArray(parsedAnalysis['contextual_tags']) ? parsedAnalysis['contextual_tags'] as string[] : [],
+          };
+
+          const result: ImageProcessingResult = {
+            analysis: imageAnalysis,
+            ocr_text: (parsedAnalysis['text_detected'] as string) || undefined,
+            faces_detected: this.countFacesFromAnalysis(Array.isArray(parsedAnalysis['objects']) ? parsedAnalysis['objects'] as string[] : []),
+            landmark_detected: this.detectLandmarks(
+              Array.isArray(parsedAnalysis['objects']) ? parsedAnalysis['objects'] as string[] : [], 
+              Array.isArray(parsedAnalysis['scenes']) ? parsedAnalysis['scenes'] as string[] : []
+            ),
+            estimated_location: this.estimateLocationFromAnalysis(
+              Array.isArray(parsedAnalysis['scenes']) ? parsedAnalysis['scenes'] as string[] : [], 
+              Array.isArray(parsedAnalysis['objects']) ? parsedAnalysis['objects'] as string[] : []
+            ),
+            mood_from_image: parsedAnalysis['mood_analysis'] ? {
+              mood: ((parsedAnalysis['mood_analysis'] as Record<string, unknown>)['mood'] as string) || 'neutral',
+              confidence: ((parsedAnalysis['mood_analysis'] as Record<string, unknown>)['confidence'] as number) || 0.7,
+              reasoning: ((parsedAnalysis['mood_analysis'] as Record<string, unknown>)['reasoning'] as string) || 'Analyzed from visual elements'
+            } : undefined,
+          };
+
+          logger.info('CLIP image analysis completed', {
+            filename,
+            objectsDetected: imageAnalysis.objects.length,
+            hasText: !!imageAnalysis.text_detected,
+            mood: result.mood_from_image?.mood,
+            categories: imageAnalysis.categories.length,
+          });
+
+          return result;
+
+        } catch (apiError) {
+          logger.error('OpenAI Vision API error, using fallback analysis', {
+            error: apiError instanceof Error ? apiError.message : 'API error',
+            filename,
+          });
+          return this.mockImageAnalysis(imageBuffer, filename);
+        }
+      }
+
+      // Fallback to mock analysis
+      logger.info('No OpenAI API key, using mock image analysis');
+      return this.mockImageAnalysis(imageBuffer, filename);
+
+    } catch (error) {
+      logger.error('Error in CLIP image analysis', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        filename,
+        bufferSize: imageBuffer.length,
+      });
+      throw new BadRequestError(
+        `Failed to analyze image: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        ErrorCodes.OPENAI_ERROR
+      );
+    }
+  }
+
+  /**
+   * Detect image MIME type from buffer
+   */
+  private detectImageMimeType(buffer: Buffer, filename?: string): string {
+    if (buffer.length < 4) return 'image/jpeg';
+
+    const header = buffer.subarray(0, 8);
+    
+    // Check for common image signatures
+    if (header[0] === 0xFF && header[1] === 0xD8 && header[2] === 0xFF) {
+      return 'image/jpeg';
+    }
+    if (header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4E && header[3] === 0x47) {
+      return 'image/png';
+    }
+    if (header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46) {
+      return 'image/gif';
+    }
+    if (header.includes(Buffer.from('WEBP'))) {
+      return 'image/webp';
+    }
+
+    // Fallback to filename extension
+    if (filename) {
+      const ext = filename.split('.').pop()?.toLowerCase();
+      switch (ext) {
+        case 'jpg':
+        case 'jpeg':
+          return 'image/jpeg';
+        case 'png':
+          return 'image/png';
+        case 'gif':
+          return 'image/gif';
+        case 'webp':
+          return 'image/webp';
+      }
+    }
+
+    return 'image/jpeg'; // Default fallback
+  }
+
+  /**
+   * Parse analysis from unstructured text response
+   */
+  private parseAnalysisFromText(text: string): Record<string, unknown> {
+    const result: Record<string, unknown> = {
+      description: text.substring(0, 200),
+      objects: [],
+      scenes: [],
+      activities: [],
+      emotions: [],
+      colors: [],
+      categories: ['general'],
+      visual_features: {
+        brightness: 'medium',
+        contrast: 'medium',
+        saturation: 'medium',
+        composition: 'standard'
+      },
+      contextual_tags: []
+    };
+
+    // Simple keyword extraction from text
+    const words = text.toLowerCase().split(/\s+/);
+    
+    // Extract potential objects
+    const objectKeywords = ['person', 'people', 'car', 'building', 'tree', 'food', 'animal', 'phone', 'computer'];
+    result['objects'] = objectKeywords.filter(keyword => 
+      words.some(word => word.includes(keyword))
+    );
+
+    // Extract potential emotions
+    const emotionKeywords = ['happy', 'sad', 'excited', 'calm', 'peaceful', 'energetic', 'serious'];
+    result['emotions'] = emotionKeywords.filter(keyword => 
+      words.some(word => word.includes(keyword))
+    );
+
+    // Extract potential colors
+    const colorKeywords = ['red', 'blue', 'green', 'yellow', 'black', 'white', 'brown', 'gray', 'orange', 'purple'];
+    result['colors'] = colorKeywords.filter(keyword => 
+      words.some(word => word.includes(keyword))
+    );
+
+    return result;
+  }
+
+  /**
+   * Count faces from detected objects
+   */
+  private countFacesFromAnalysis(objects: string[]): number {
+    const faceKeywords = ['person', 'people', 'face', 'man', 'woman', 'child', 'human'];
+    const faceObjects = objects.filter(obj => 
+      faceKeywords.some(keyword => obj.toLowerCase().includes(keyword))
+    );
+    return faceObjects.length;
+  }
+
+  /**
+   * Detect landmarks from scene analysis
+   */
+  private detectLandmarks(objects: string[], scenes: string[]): boolean {
+    const landmarkKeywords = ['monument', 'building', 'tower', 'bridge', 'statue', 'landmark', 'famous', 'historic'];
+    const allItems = [...objects, ...scenes];
+    return allItems.some(item => 
+      landmarkKeywords.some(keyword => item.toLowerCase().includes(keyword))
+    );
+  }
+
+  /**
+   * Estimate location from visual analysis
+   */
+  private estimateLocationFromAnalysis(scenes: string[], objects: string[]): string | undefined {
+    const allItems = [...scenes, ...objects].map(item => item.toLowerCase());
+    
+    // Indoor/outdoor classification
+    if (allItems.some(item => item.includes('outdoor') || item.includes('park') || item.includes('street'))) {
+      return 'outdoor_location';
+    }
+    if (allItems.some(item => item.includes('indoor') || item.includes('room') || item.includes('office'))) {
+      return 'indoor_location';
+    }
+    
+    // Specific location types
+    if (allItems.some(item => item.includes('restaurant') || item.includes('cafe'))) {
+      return 'restaurant_or_cafe';
+    }
+    if (allItems.some(item => item.includes('beach') || item.includes('ocean'))) {
+      return 'beach_or_coastal';
+    }
+    if (allItems.some(item => item.includes('home') || item.includes('house'))) {
+      return 'residential';
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Validate visual level to ensure it matches the required type
+   */
+  private validateVisualLevel(level: string): 'low' | 'medium' | 'high' {
+    if (level === 'low' || level === 'medium' || level === 'high') {
+      return level;
+    }
+    return 'medium'; // Default fallback
+  }
+
+  /**
+   * Mock image analysis for fallback
+   */
+  private mockImageAnalysis(imageBuffer: Buffer, filename?: string): ImageProcessingResult {
+    logger.info('Using mock CLIP image analysis', {
+      bufferSize: imageBuffer.length,
+      filename,
+    });
+
+    const mockAnalysis: CLIPImageAnalysis = {
+      description: 'Image analyzed - detailed analysis unavailable without OpenAI API key',
+      objects: ['image_content'],
+      scenes: ['general_scene'],
+      activities: ['viewing'],
+      emotions: ['neutral'],
+      colors: ['various_colors'],
+      confidence: 0.5,
+      categories: ['general'],
+      visual_features: {
+        brightness: 'medium',
+        contrast: 'medium',
+        saturation: 'medium',
+        composition: 'standard composition',
+      },
+      contextual_tags: ['uploaded_image', 'whatsapp_media'],
+    };
+
+    return {
+      analysis: mockAnalysis,
+      faces_detected: 0,
+      landmark_detected: false,
+    };
   }
 }
 

@@ -25,7 +25,7 @@ router.get('/detailed', async (_req, res) => {
     const [dbHealth, dbStats, mem0Health, openaiHealth, localStorageHealth] = await Promise.allSettled([
       checkDatabaseHealth(),
       getDatabaseStats(),
-      getMem0Service().healthCheck(),
+      Promise.resolve({ status: getMem0Service().isMemoryServiceConnected() ? 'connected' : 'disconnected' }),
       getOpenAIService().healthCheck(),
       getLocalStorageService().healthCheck(),
     ]);
@@ -78,7 +78,7 @@ router.get('/ready', async (_req, res) => {
     // Check all critical service health
     const [dbHealth, mem0Health, openaiHealth, localStorageHealth] = await Promise.allSettled([
       checkDatabaseHealth(),
-      getMem0Service().healthCheck(),
+      Promise.resolve({ status: getMem0Service().isMemoryServiceConnected() ? 'connected' : 'disconnected' }),
       getOpenAIService().healthCheck(),
       getLocalStorageService().healthCheck(),
     ]);

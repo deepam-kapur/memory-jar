@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
 import { MediaService } from '../services/mediaService';
 import { getReminderService } from '../services/reminderService';
-import { getMoodDetectionService } from '../services/moodDetectionService';
 import logger from '../config/logger';
 
 export class AnalyticsController {

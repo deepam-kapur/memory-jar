@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
 import { getReminderService } from '../services/reminderService';
-import { getTimezoneService } from '../services/timezoneService';
 import { NotFoundError, BadRequestError, ErrorCodes } from '../utils/errors';
 import logger from '../config/logger';
 
@@ -157,6 +156,10 @@ export class ReminderController {
 
       if (!userId) {
         throw new BadRequestError('userId is required', ErrorCodes.MISSING_REQUIRED_FIELD);
+      }
+
+      if (!id) {
+        throw new BadRequestError('id is required', ErrorCodes.MISSING_REQUIRED_FIELD);
       }
 
       const cancelled = await reminderService.cancelReminder(id, userId);

@@ -1,6 +1,5 @@
 import { getDatabase } from './database';
 import { getTwilioService } from './twilioService';
-import { getMoodDetectionService } from './moodDetectionService';
 import logger from '../config/logger';
 import { BadRequestError, NotFoundError, ErrorCodes } from '../utils/errors';
 
@@ -155,7 +154,10 @@ export class MemorySharingService {
       });
 
       // Send WhatsApp notification to the recipient
-      await this.sendShareNotification(sharedMemory);
+      await this.sendShareNotification({
+        ...sharedMemory,
+        message: sharedMemory.message ?? undefined
+      } as MemoryShareResponse);
 
       logger.info('Memory shared successfully', {
         shareId: sharedMemory.id,
@@ -165,7 +167,10 @@ export class MemorySharingService {
         toPhoneNumber: cleanPhoneNumber,
       });
 
-      return sharedMemory;
+      return {
+        ...sharedMemory,
+        message: sharedMemory.message ?? undefined
+      } as MemoryShareResponse;
     } catch (error) {
       logger.error('Error sharing memory', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -272,7 +277,10 @@ export class MemorySharingService {
       }
 
       // Notify the original sharer
-      await this.sendAcceptanceNotification(updatedShare);
+      await this.sendAcceptanceNotification({
+        ...updatedShare,
+        message: updatedShare.message ?? undefined
+      } as MemoryShareResponse);
 
       logger.info('Memory share accepted', {
         shareId,
@@ -280,7 +288,10 @@ export class MemorySharingService {
         copiedToMemories: copyToMyMemories,
       });
 
-      return updatedShare;
+      return {
+        ...updatedShare,
+        message: updatedShare.message ?? undefined
+      } as MemoryShareResponse;
     } catch (error) {
       logger.error('Error accepting memory share', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -355,14 +366,20 @@ export class MemorySharingService {
       });
 
       // Notify the original sharer
-      await this.sendRejectionNotification(updatedShare);
+      await this.sendRejectionNotification({
+        ...updatedShare,
+        message: updatedShare.message ?? undefined
+      } as MemoryShareResponse);
 
       logger.info('Memory share rejected', {
         shareId,
         toUserId,
       });
 
-      return updatedShare;
+      return {
+        ...updatedShare,
+        message: updatedShare.message ?? undefined
+      } as MemoryShareResponse;
     } catch (error) {
       logger.error('Error rejecting memory share', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -445,7 +462,10 @@ export class MemorySharingService {
         count: shares.length,
       });
 
-      return shares;
+      return shares.map(share => ({
+        ...share,
+        message: share.message ?? undefined
+      })) as MemoryShareResponse[];
     } catch (error) {
       logger.error('Error getting user memory shares', {
         error: error instanceof Error ? error.message : 'Unknown error',

@@ -83,7 +83,7 @@ export class ReminderService {
   async createReminder(options: CreateReminderOptions): Promise<ReminderWithDetails> {
     try {
       const db = getDatabase();
-      const timezoneService = getTimezoneService();
+      // const timezoneService = getTimezoneService(); // TODO: Use for timezone-aware reminders
 
       // Validate user exists
       const user = await db.user.findUnique({
@@ -109,7 +109,7 @@ export class ReminderService {
       }
 
       // Convert scheduled time to UTC for storage
-      const userTimezone = options.timezone || user.timezone;
+      // const userTimezone = options.timezone || user.timezone; // TODO: Use for timezone-aware scheduling
       // For now, just use the provided date as-is (in production, you'd want proper timezone conversion)
       const scheduledForUTC = new Date(options.scheduledFor);
 
@@ -148,7 +148,7 @@ export class ReminderService {
         userId: options.userId,
         memoryId: options.memoryId,
         scheduledFor: scheduledForUTC.toISOString(),
-        userTimezone
+        // TODO: Use timezone for proper scheduling
       });
 
       return reminder;
@@ -175,7 +175,7 @@ export class ReminderService {
   async processScheduledReminders(): Promise<void> {
     try {
       const db = getDatabase();
-      const twilioService = getTwilioService();
+      // const twilioService = getTwilioService(); // TODO: Use for reminder notifications
       const now = new Date();
 
       // Find all pending reminders that are due
@@ -264,12 +264,13 @@ export class ReminderService {
    */
   private async sendReminderMessage(reminder: ReminderWithDetails): Promise<void> {
     try {
-      const twilioService = getTwilioService();
+      // const twilioService = getTwilioService(); // TODO: Use for reminder notifications
       const whatsappNumber = `whatsapp:${reminder.user.phoneNumber}`;
 
       // Format reminder message
       const message = this.formatReminderMessage(reminder);
 
+      const twilioService = getTwilioService();
       await twilioService.sendWhatsAppMessage(whatsappNumber, message);
 
       logger.info('Reminder WhatsApp message sent', {
@@ -411,7 +412,7 @@ export class ReminderService {
     message: string
   ): Promise<ReminderWithDetails | null> {
     try {
-      const timezoneService = getTimezoneService();
+      // const timezoneService = getTimezoneService(); // TODO: Use for timezone-aware reminders
       
       // Get user timezone
       const db = getDatabase();
@@ -458,7 +459,7 @@ export class ReminderService {
    * Parse natural language time expressions (basic implementation)
    * In production, you'd want to use a more sophisticated NLP library
    */
-  private parseNaturalLanguageTime(timeExpression: string, userTimezone: string): Date | null {
+  private parseNaturalLanguageTime(timeExpression: string, _userTimezone: string): Date | null {
     const now = new Date();
     const lowerExpression = timeExpression.toLowerCase();
 

@@ -71,7 +71,7 @@ export class GeoTaggingService {
         placeName = addressAnalysis.placeName;
         city = addressAnalysis.city;
         country = addressAnalysis.country;
-        locationTags = addressAnalysis.tags;
+        // locationTags = addressAnalysis.tags; // TODO: Use location tags in future enhancement
       }
 
       // Estimate timezone based on coordinates (basic implementation)
@@ -388,7 +388,7 @@ Only include coordinates if you're confident about specific known places.`;
    * Rule-based location extraction
    */
   private extractLocationWithRules(content: string): LocationInfo | null {
-    const lowerContent = content.toLowerCase();
+    // const lowerContent = content.toLowerCase(); // TODO: Use for enhanced location matching
     
     // Look for common location patterns
     const locationPatterns = [
@@ -401,8 +401,8 @@ Only include coordinates if you're confident about specific known places.`;
 
     for (const pattern of locationPatterns) {
       const matches = [...content.matchAll(pattern)];
-      if (matches.length > 0) {
-        const placeName = matches[0][1]?.trim();
+      if (matches.length > 0 && matches[0] && matches[0][1]) {
+        const placeName = matches[0][1].trim();
         if (placeName && placeName.length > 2 && placeName.length < 50) {
           return {
             latitude: 0,

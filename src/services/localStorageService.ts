@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import fetch from 'node-fetch';
 import { env } from '../config/environment';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';

@@ -46,6 +46,13 @@ export class MemorySharingController {
       const { shareId } = req.params;
       const { toUserId, copyToMyMemories = true } = req.body;
 
+      if (!shareId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Share ID is required'
+        });
+      }
+
       const acceptedShare = await memorySharingService.acceptMemoryShare({
         shareId,
         toUserId,
@@ -59,7 +66,8 @@ export class MemorySharingController {
         requestId: req.id,
       });
 
-      res.json({
+      return res.json({
+        success: true,
         data: acceptedShare,
         message: copyToMyMemories 
           ? 'Memory share accepted and added to your memories!'
@@ -80,6 +88,13 @@ export class MemorySharingController {
       const { shareId } = req.params;
       const { toUserId } = req.body;
 
+      if (!shareId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Share ID is required'
+        });
+      }
+
       const rejectedShare = await memorySharingService.rejectMemoryShare(shareId, toUserId);
 
       logger.info('Memory share rejected via API', {
@@ -88,7 +103,8 @@ export class MemorySharingController {
         requestId: req.id,
       });
 
-      res.json({
+      return res.json({
+        success: true,
         data: rejectedShare,
         message: 'Memory share rejected.',
       });
@@ -246,7 +262,7 @@ export class MemorySharingController {
    */
   static async respondToShare(req: Request, res: Response) {
     try {
-      const { shareId, userId, action, message } = req.body;
+      const { shareId, userId, action } = req.body;
 
       if (!['accept', 'reject'].includes(action)) {
         throw new BadRequestError(

@@ -108,135 +108,116 @@ export class MemoryController {
   }
 
   /**
-   * Search memories using Mem0 for semantic search
+   * Search memories using ONLY Mem0 for semantic search - showcases full Mem0 capabilities
    * GET /memories?query=<text>
    */
   static async searchMemories(req: Request, res: Response) {
     try {
-      const { query, page = 1, limit = 20, userId, memoryType, tags, minImportance, maxImportance } = req.query;
-      const db = getDatabase();
-
-      // Search memories directly in database with text search
-      const whereConditions: any = {};
+      const { query, limit = 20, userId } = req.query;
       
-      if (query) {
-        // Extract keywords from the query for better search
-        const keywords = (query as string)
-          .toLowerCase()
-          .split(' ')
-          .filter(word => word.length > 2) // Filter out short words like "I", "is", "was"
-          .filter(word => !['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'this', 'that', 'was', 'were', 'will', 'would', 'when', 'what', 'where', 'who', 'how', 'week', 'day', 'time'].includes(word));
-        
-        if (keywords.length > 0) {
-          // Search for any of the keywords in the content
-          whereConditions.OR = keywords.map(keyword => ({
-            content: {
-              contains: keyword,
-              mode: 'insensitive',
-            }
-          }));
-        } else {
-          // Fallback to full query search if no keywords
-          whereConditions.content = {
-            contains: query as string,
-            mode: 'insensitive',
-          };
+      if (!query) {
+        return res.status(400).json({
+          success: false,
+          message: 'Query parameter is required for Mem0 semantic search',
+          error: {
+            code: 'MISSING_QUERY',
+            details: 'Provide a natural language query to search your memories'
+          }
+        });
+      }
+
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: 'User ID is required for Mem0 search',
+          error: {
+            code: 'MISSING_USER_ID',
+            details: 'User context is required for semantic memory retrieval'
+          }
+        });
+      }
+
+      const mem0Service = getMem0Service();
+      
+      // Use ONLY Mem0 for semantic search - this showcases Mem0's core capabilities
+      logger.info('Using Mem0 semantic search for query', {
+        query: query as string,
+        userId: userId as string,
+        limit: Number(limit)
+      });
+
+      const mem0Results = await mem0Service.searchMemories(
+        query as string,
+        userId as string,
+        Number(limit)
+      );
+
+      if (mem0Results.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: 'No memories found for this query',
+          data: {
+            memories: [],
+            total: 0,
+            query: query as string,
+            searchType: 'semantic_mem0',
+            suggestion: 'Try rephrasing your query or ask about something you\'ve shared before'
+          }
+        });
+      }
+
+      // Format Mem0 results for API response
+      const formattedMemories = mem0Results.map(result => ({
+        id: result.id,
+        content: result.content,
+        metadata: result.metadata,
+        score: result.score,
+        relevance: result.score > 0.8 ? 'high' : result.score > 0.6 ? 'medium' : 'low',
+        searchType: 'semantic',
+        source: 'mem0_cloud'
+      }));
+
+      logger.info('Mem0 semantic search completed successfully', {
+        query: query as string,
+        userId: userId as string,
+        resultsCount: formattedMemories.length,
+        averageScore: formattedMemories.reduce((sum, m) => sum + m.score, 0) / formattedMemories.length
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Found ${formattedMemories.length} semantically relevant memories`,
+        data: {
+          memories: formattedMemories,
+          total: formattedMemories.length,
+          query: query as string,
+          searchType: 'semantic_mem0',
+          searchEngine: 'mem0_cloud',
+          capabilities: [
+            'Semantic understanding',
+            'Context-aware recall',
+            'Natural language queries',
+            'Temporal awareness',
+            'Personal knowledge extraction'
+          ]
         }
-      }
-
-      // Add optional filters
-      if (userId) {
-        whereConditions.userId = userId;
-      }
-
-      if (memoryType) {
-        whereConditions.memoryType = memoryType;
-      }
-
-      if (tags && Array.isArray(tags)) {
-        whereConditions.tags = {
-          hasSome: tags,
-        };
-      }
-
-      if (minImportance || maxImportance) {
-        whereConditions.importance = {};
-        if (minImportance) whereConditions.importance.gte = Number(minImportance);
-        if (maxImportance) whereConditions.importance.lte = Number(maxImportance);
-      }
-
-      // Get memories from database with Mem0 IDs
-      const memories = await db.memory.findMany({
-        where: whereConditions,
-        skip: (Number(page) - 1) * Number(limit),
-        take: Number(limit),
-        orderBy: { lastAccessed: 'desc' },
-        include: {
-          user: {
-            select: {
-              id: true,
-              phoneNumber: true,
-              name: true,
-            },
-          },
-          interaction: {
-            select: {
-              id: true,
-              messageType: true,
-              content: true,
-            },
-          },
-        },
-      });
-
-      const total = await db.memory.count({
-        where: whereConditions,
-      });
-
-      // Update access count and last accessed for found memories
-      if (memories.length > 0) {
-        // Use individual updates instead of updateMany for better compatibility
-        const updatePromises = memories.map(memory => 
-          db.memory.update({
-            where: { id: memory.id },
-            data: {
-              accessCount: { increment: 1 },
-              lastAccessed: new Date(),
-            },
-          })
-        );
-        await Promise.all(updatePromises);
-      }
-
-      logger.info('Memories searched in database', {
-        query,
-        resultsCount: memories.length,
-        total,
-        filters: { userId, memoryType, tags, minImportance, maxImportance },
-        requestId: req.id,
-      });
-
-      res.json({
-        data: memories,
-        pagination: {
-          page: Number(page),
-          limit: Number(limit),
-          total,
-          pages: Math.ceil(total / Number(limit)),
-          hasNext: Number(page) * Number(limit) < total,
-          hasPrev: Number(page) > 1,
-        },
-        search: {
-          query,
-          resultsCount: memories.length,
-          filters: { userId, memoryType, tags, minImportance, maxImportance },
-          semanticSearch: true,
-        },
       });
 
     } catch (error) {
-      logger.error('Error searching memories', { error });
-      throw error;
+      logger.error('Error in Mem0 semantic search', { 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        queryParam: req.query.query as string,
+        userIdParam: req.query.userId as string 
+      });
+      
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to perform semantic search',
+        error: {
+          code: 'MEM0_SEARCH_ERROR',
+          details: 'Mem0 semantic search encountered an error. Please check your API key and connection.'
+        }
+      });
     }
   }
 

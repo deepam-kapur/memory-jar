@@ -288,13 +288,13 @@ export class WebhookController {
       if (searchResults.length === 0) {
         return {
           type: 'text',
-          content: `🔍 *No memories found* for "${query}"\n\n🤔 *Smart suggestions:*\n• Try different keywords\n• Ask about emotions: "when was I happy?"\n• Search by location: "what did I do downtown?"\n• Use /list to see all memories\n\n🧠 *AI tip:* I can search by mood, location, and content!`,
+          content: `🧠 *Mem0 found no semantic matches* for "${query}"\n\n🔬 *Mem0's semantic search analyzed:*\n• Related concepts and synonyms\n• Emotional and contextual connections\n• Time-based associations\n• Personal knowledge patterns\n\n💡 *Try asking about:*\n• Facts: "my birthday", "travel plans", "meeting notes"\n• Emotions: "when was I happy?", "stressful moments"\n• Tasks: "things to do", "reminders I set"\n• Relationships: "what did I say about [person]?"\n\n🚀 *Powered by Mem0's semantic intelligence*`,
         };
       }
       
-      // Create innovative search response
-      let responseMessage = `🔍 *Found ${searchResults.length} memor${searchResults.length === 1 ? 'y' : 'ies'}*\n`;
-      responseMessage += `💭 Query: "${query}"\n\n`;
+      // Create Mem0-powered search response  
+      let responseMessage = `🧠 *Mem0 found ${searchResults.length} semantically relevant memor${searchResults.length === 1 ? 'y' : 'ies'}*\n`;
+      responseMessage += `🔍 Query: "${query}"\n\n`;
       
       searchResults.forEach((memory, index) => {
         const createdAt = memory.metadata?.['createdAt'];
@@ -330,7 +330,8 @@ export class WebhookController {
         responseMessage += `\n\n`;
       });
       
-      responseMessage += `🧠 *AI-powered search active*\n`;
+      responseMessage += `🚀 *Powered by Mem0's semantic intelligence*\n`;
+      responseMessage += `🔬 Understanding context, emotions, and personal patterns\n`;
       responseMessage += `💡 Ask more questions or use /list for all memories`;
       
       return {
@@ -467,8 +468,8 @@ export class WebhookController {
       const db = getDatabase();
       
       // Extract tags from metadata if available
-      const tags = Array.isArray(processedMemory.metadata?.tags) 
-        ? processedMemory.metadata.tags as string[]
+      const tags = Array.isArray(processedMemory.metadata?.['tags']) 
+        ? processedMemory.metadata['tags'] as string[]
         : [];
       
       // Calculate importance based on mood detection if available
@@ -592,6 +593,32 @@ export class WebhookController {
       if (processedMemory.tags && processedMemory.tags.length > 0) {
         const displayTags = processedMemory.tags.slice(0, 5); // Show max 5 tags
         response += `🏷️ Tags: ${displayTags.join(', ')}\n`;
+      }
+      
+      // Show CLIP analysis results for images
+      if (processedMemory.memoryType === 'IMAGE' && processedMemory.metadata?.clipAnalysis) {
+        const clip = processedMemory.metadata.clipAnalysis;
+        response += `\n🤖 *CLIP AI Analysis:*\n`;
+        
+        if (clip.objects && clip.objects.length > 0) {
+          response += `👁️ Objects: ${clip.objects.slice(0, 3).join(', ')}\n`;
+        }
+        
+        if (clip.activities && clip.activities.length > 0) {
+          response += `⚡ Activities: ${clip.activities.slice(0, 2).join(', ')}\n`;
+        }
+        
+        if (clip.faces_detected && clip.faces_detected > 0) {
+          response += `👤 People detected: ${clip.faces_detected}\n`;
+        }
+        
+        if (clip.detectedText) {
+          response += `📝 Text in image: "${clip.detectedText.substring(0, 50)}${clip.detectedText.length > 50 ? '...' : ''}"\n`;
+        }
+        
+        if (clip.estimated_location) {
+          response += `📍 Scene type: ${clip.estimated_location.replace('_', ' ')}\n`;
+        }
       }
       
       // Show media info if available

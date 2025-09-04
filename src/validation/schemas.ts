@@ -171,7 +171,7 @@ export const cancelReminderSchema = z.object({
 export const shareMemorySchema = z.object({
   memoryId: z.string().cuid(),
   fromUserId: z.string().cuid(),
-  toPhoneNumber: z.string().min(10).max(15).regex(/^\+?[\d\s\-\(\)]+$/),
+  toPhoneNumber: z.string().min(10).max(15).regex(/^\+?[\d\s\-()]+$/),
   message: z.string().max(500).optional(),
 });
 

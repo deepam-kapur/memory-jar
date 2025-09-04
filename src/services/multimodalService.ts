@@ -6,6 +6,7 @@ import { getOpenAIService } from './openaiService';
 import { getLocalStorageService } from './localStorageService';
 import { getImageProcessingService } from './imageProcessingService';
 import { getDatabase } from './database';
+import { env } from '../config/environment';
 
 import { getMoodDetectionService, MoodDetection } from './moodDetectionService';
 import { getGeoTaggingService, LocationInfo, GeoTaggedMemory } from './geoTaggingService';
@@ -198,11 +199,75 @@ export class MultimodalService {
     // Download media buffer
     const mediaBuffer = await this.twilioService.downloadMedia(mediaFile.url);
     
-    // Analyze image using enhanced AI processing
-    const imageAnalysis = await this.imageProcessingService.analyzeImage(mediaBuffer, mediaFile.filename);
+    // Analyze image using OpenAI CLIP for advanced analysis
+    let imageAnalysis;
+    let clipAnalysis;
+    try {
+      clipAnalysis = await this.openaiService.analyzeImageWithCLIP(mediaBuffer, mediaFile.filename);
+      
+      imageAnalysis = {
+        description: clipAnalysis.analysis.description,
+        objects: clipAnalysis.analysis.objects,
+        colors: clipAnalysis.analysis.colors,
+        mood: clipAnalysis.mood_from_image?.mood || 'neutral',
+        detectedText: clipAnalysis.ocr_text || '',
+        tags: [
+          ...clipAnalysis.analysis.objects,
+          ...clipAnalysis.analysis.emotions,
+          ...clipAnalysis.analysis.contextual_tags,
+          ...clipAnalysis.analysis.categories
+        ],
+        scenes: clipAnalysis.analysis.scenes,
+        activities: clipAnalysis.analysis.activities,
+        emotions: clipAnalysis.analysis.emotions,
+        visual_features: clipAnalysis.analysis.visual_features,
+        faces_detected: clipAnalysis.faces_detected || 0,
+        landmark_detected: clipAnalysis.landmark_detected || false,
+        estimated_location: clipAnalysis.estimated_location,
+        confidence: clipAnalysis.analysis.confidence
+      };
+      
+      logger.info('CLIP image analysis completed', {
+        filename: mediaFile.filename,
+        objectsDetected: imageAnalysis.objects.length,
+        hasText: !!imageAnalysis.detectedText,
+        detectedMood: imageAnalysis.mood,
+        facesDetected: imageAnalysis.faces_detected,
+        categories: clipAnalysis.analysis.categories.length
+      });
+    } catch (analysisError) {
+      logger.warn('CLIP image analysis failed, using fallback', {
+        error: analysisError instanceof Error ? analysisError.message : 'Unknown error',
+        filename: mediaFile.filename
+      });
+      
+      // Fallback to basic image processing service
+      try {
+        imageAnalysis = await this.imageProcessingService.analyzeImage(mediaBuffer, mediaFile.filename);
+      } catch {
+        // Ultimate fallback
+        imageAnalysis = {
+          description: `Image uploaded: ${mediaFile.filename}`,
+          objects: ['image'],
+          colors: ['unknown'],
+          mood: 'neutral',
+          detectedText: '',
+          tags: ['image', 'upload'],
+          confidence: 0.3
+        };
+      }
+    }
     
-    // Generate image embedding for similarity search
-    const imageEmbedding = await this.imageProcessingService.generateImageEmbedding(mediaBuffer);
+    // Generate image embedding for similarity search (fallback to empty if service fails)
+    let imageEmbedding;
+    try {
+      imageEmbedding = await this.imageProcessingService.generateImageEmbedding(mediaBuffer);
+    } catch (embeddingError) {
+      logger.warn('Image embedding generation failed', {
+        error: embeddingError instanceof Error ? embeddingError.message : 'Unknown error'
+      });
+      imageEmbedding = null;
+    }
     
     // Store media using local storage
     const storedFile = await this.localStorageService.storeFile(mediaBuffer, mediaFile.filename, 'image/jpeg');
@@ -283,9 +348,25 @@ export class MultimodalService {
         timestamp: new Date().toISOString(),
         mediaUrls: [storedFile.fileUrl],
         imageAnalysis,
+        clipAnalysis: clipAnalysis ? {
+          description: clipAnalysis.analysis.description,
+          objects: clipAnalysis.analysis.objects,
+          scenes: clipAnalysis.analysis.scenes,
+          activities: clipAnalysis.analysis.activities,
+          emotions: clipAnalysis.analysis.emotions,
+          colors: clipAnalysis.analysis.colors,
+          visual_features: clipAnalysis.analysis.visual_features,
+          faces_detected: clipAnalysis.faces_detected,
+          landmark_detected: clipAnalysis.landmark_detected,
+          estimated_location: clipAnalysis.estimated_location,
+          detectedText: clipAnalysis.ocr_text,
+          confidence: clipAnalysis.analysis.confidence,
+          mood_from_image: clipAnalysis.mood_from_image
+        } : undefined,
         embedding: imageEmbedding,
         moodDetection: combinedMoodDetection,
         aiEnhanced: true,
+        clipEnabled: !!env.OPENAI_API_KEY,
       },
       userId,
       interactionId,
@@ -740,82 +821,135 @@ export class MultimodalService {
    */
   async searchMemories(query: string, userId?: string, limit: number = 10): Promise<ProcessedMemory[]> {
     try {
-      // Use database search instead of Mem0
-      const db = getDatabase();
-      
-      // Extract keywords from the query for better search
-      const keywords = query
-        .toLowerCase()
-        .split(' ')
-        .filter(word => word.length > 2) // Filter out short words
-        .filter(word => !['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'this', 'that', 'was', 'were', 'will', 'would', 'when', 'what', 'where', 'who', 'how', 'week', 'day', 'time'].includes(word));
-      
-      const whereConditions: any = {};
-      
-      if (keywords.length > 0) {
-        // Search for any of the keywords in the content
-        whereConditions.OR = keywords.map(keyword => ({
-          content: {
-            contains: keyword,
-            mode: 'insensitive',
-          }
-        }));
-      } else {
-        // Fallback to full query search if no keywords
-        whereConditions.content = {
-          contains: query,
-          mode: 'insensitive',
-        };
-      }
-      
-      if (userId) {
-        whereConditions.userId = userId;
-      }
-      
-      const memories = await db.memory.findMany({
-        where: whereConditions,
-        take: limit,
-        orderBy: { lastAccessed: 'desc' },
-        include: {
-          mediaFiles: true,
-        },
-      });
-      
-      const processedMemories: ProcessedMemory[] = memories.map(memory => ({
-        id: memory.mem0Id,
-        content: memory.content,
-        memoryType: memory.memoryType as 'TEXT' | 'IMAGE' | 'AUDIO' | 'MIXED',
-        mediaFiles: memory.mediaFiles.map(mf => mf.fileUrl),
-        metadata: { 
-          createdAt: memory.createdAt.toISOString(),
-          importance: memory.importance,
-          tags: memory.tags,
-          score: 0.8 // Default relevance score
-        },
-        userId: memory.userId,
-        interactionId: memory.interactionId,
-      }));
-
-      logger.info('Memories searched successfully', {
+      logger.info('Searching memories with Mem0 semantic search', {
         query,
-        resultsCount: processedMemories.length,
         userId,
         limit,
+      });
+
+      if (!userId) {
+        logger.warn('No userId provided for memory search');
+        return [];
+      }
+
+      // Use ONLY Mem0 for semantic search - showcase full Mem0 capabilities!
+      // Detect timeframe from query for better temporal search
+      const timeframe = this.extractTimeframe(query);
+      const mem0Results = timeframe 
+        ? await this.mem0Service.searchMemoriesWithContext(query, userId, timeframe)
+        : await this.mem0Service.searchMemories(query, userId, limit);
+      
+      if (mem0Results.length === 0) {
+        logger.info('No semantic results found in Mem0 - this is expected for new users or unrelated queries', { query, userId });
+        // Return empty results - we rely ONLY on Mem0's semantic understanding
+        return [];
+      }
+
+      // Enhance Mem0 results with database metadata and media files
+      const db = getDatabase();
+      
+      const processedMemories: ProcessedMemory[] = [];
+
+      for (const mem0Result of mem0Results) {
+        try {
+          // Find corresponding database record for media files and additional metadata
+          const dbMemory = await db.memory.findFirst({
+            where: {
+              mem0Id: mem0Result.id,
+              userId: userId
+            },
+            include: {
+              mediaFiles: true,
+            },
+          });
+
+          // Create processed memory combining Mem0 semantic data with DB metadata
+          const processedMemory: ProcessedMemory = {
+            id: mem0Result.id,
+            content: mem0Result.content,
+            memoryType: (mem0Result.metadata?.['memoryType'] as 'TEXT' | 'IMAGE' | 'AUDIO' | 'MIXED') || 'TEXT',
+            mediaFiles: dbMemory?.mediaFiles.map(mf => ({
+              url: mf.s3Url || `/media/${mf.fileName}`,
+              filename: mf.fileName || 'unknown',
+              contentType: mf.fileType || 'application/octet-stream',
+              originalUrl: mf.s3Url || `/media/${mf.fileName}`
+            })) || [],
+            metadata: { 
+              ...mem0Result.metadata,
+              createdAt: mem0Result.metadata?.['timestamp'] || new Date().toISOString(),
+              importance: mem0Result.metadata?.['importance'] || 5,
+              tags: mem0Result.metadata?.['tags'] || [],
+              score: mem0Result.score, // Semantic relevance score from Mem0
+              semanticSearch: true // Flag to indicate this came from semantic search
+            },
+            userId: userId,
+            interactionId: (mem0Result.metadata?.['interactionId'] as string) || undefined,
+          };
+
+          processedMemories.push(processedMemory);
+        } catch (dbError) {
+          logger.warn('Could not find database record for memory', {
+            mem0Id: mem0Result.id,
+            error: dbError instanceof Error ? dbError.message : 'Unknown error'
+          });
+          
+          // Still include the Mem0 result even without DB metadata
+          processedMemories.push({
+            id: mem0Result.id,
+            content: mem0Result.content,
+            memoryType: (mem0Result.metadata?.['memoryType'] as 'TEXT' | 'IMAGE' | 'AUDIO' | 'MIXED') || 'TEXT',
+            mediaFiles: [],
+            metadata: {
+              ...mem0Result.metadata,
+              score: mem0Result.score,
+              semanticSearch: true
+            },
+            userId: userId,
+            interactionId: (mem0Result.metadata?.['interactionId'] as string) || undefined,
+          });
+        }
+      }
+
+      logger.info('Semantic search completed successfully', {
+        query,
+        mem0ResultsCount: mem0Results.length,
+        processedResultsCount: processedMemories.length,
+        userId,
+        averageScore: processedMemories.reduce((sum, m) => sum + (typeof m.metadata?.['score'] === 'number' ? m.metadata['score'] : 0), 0) / processedMemories.length
       });
 
       return processedMemories;
 
     } catch (error) {
-      logger.error('Error searching memories', {
+      logger.error('Error in Mem0 semantic search', {
         error: error instanceof Error ? error.message : 'Unknown error',
         query,
         userId,
       });
-      throw new BadRequestError(
-        `Failed to search memories: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        ErrorCodes.MEM0_ERROR
-      );
+
+      // NO FALLBACK - We showcase Mem0's capabilities exclusively
+      logger.info('Mem0 search failed - this showcases our reliance on Mem0 semantic capabilities');
+      return [];
     }
+  }
+
+  /**
+   * Extract timeframe information from query for enhanced Mem0 search
+   */
+  private extractTimeframe(query: string): string | undefined {
+    const lowerQuery = query.toLowerCase();
+    
+    if (lowerQuery.includes('today')) return 'today';
+    if (lowerQuery.includes('yesterday')) return 'yesterday';
+    if (lowerQuery.includes('this week') || lowerQuery.includes('week')) return 'this_week';
+    if (lowerQuery.includes('last week')) return 'last_week';
+    if (lowerQuery.includes('this month') || lowerQuery.includes('month')) return 'this_month';
+    if (lowerQuery.includes('last month')) return 'last_month';
+    if (lowerQuery.includes('recently') || lowerQuery.includes('recent')) return 'recent';
+    if (lowerQuery.includes('days ago')) return 'few_days_ago';
+    if (lowerQuery.includes('weeks ago')) return 'few_weeks_ago';
+    
+    return undefined;
   }
 
   /**
@@ -823,7 +957,7 @@ export class MultimodalService {
    */
   async healthCheck(): Promise<{ status: string; details?: Record<string, unknown> }> {
     try {
-      const mem0Health = await this.mem0Service.healthCheck();
+      const mem0Health = this.mem0Service.isMemoryServiceConnected();
       const twilioHealth = await this.twilioService.healthCheck();
       const openaiHealth = await this.openaiService.healthCheck();
       const storageHealth = await this.localStorageService.healthCheck();

@@ -1,6 +1,5 @@
 import { getOpenAIService } from './openaiService';
 import logger from '../config/logger';
-import { BadRequestError, ErrorCodes } from '../utils/errors';
 
 export interface MoodDetection {
   mood: 'happy' | 'sad' | 'excited' | 'stressed' | 'anxious' | 'angry' | 'grateful' | 'confused' | 'neutral';
@@ -329,8 +328,8 @@ Focus on:
 
     // Determine primary mood
     const sortedMoods = Object.entries(moodScores).sort(([, a], [, b]) => b - a);
-    const primaryMood = sortedMoods.length > 0 ? sortedMoods[0][0] : 'neutral';
-    const moodScore = sortedMoods.length > 0 ? sortedMoods[0][1] : 0;
+    const primaryMood = sortedMoods.length > 0 && sortedMoods[0] ? sortedMoods[0][0] : 'neutral';
+    const moodScore = sortedMoods.length > 0 && sortedMoods[0] ? sortedMoods[0][1] : 0;
 
     // Calculate confidence based on indicator strength
     const confidence = Math.min(0.6 + (moodScore * 0.1), 0.9);
@@ -371,7 +370,7 @@ Focus on:
   /**
    * Generate mood-based suggestions
    */
-  private generateSuggestions(mood: string, sentiment: string): string[] {
+  private generateSuggestions(mood: string, _sentiment: string): string[] {
     const suggestions: Record<string, string[]> = {
       stressed: ['Consider taking a break', 'Try deep breathing exercises', 'Break tasks into smaller steps'],
       anxious: ['Focus on what you can control', 'Practice mindfulness', 'Talk to someone you trust'],
@@ -405,7 +404,7 @@ Focus on:
   /**
    * Create basic neutral mood (for non-enhanced results)
    */
-  private createBasicNeutralMood(reasoning: string): MoodDetection {
+  private createBasicNeutralMood(_reasoning: string): MoodDetection {
     return {
       mood: 'neutral',
       confidence: 0.6,
@@ -452,7 +451,7 @@ Focus on:
       for (const color of imageAnalysis.colors) {
         if (colorMoods[color.toLowerCase()]) {
           const colorMood = colorMoods[color.toLowerCase()];
-          if (colorMood.confidence > confidence) {
+          if (colorMood && colorMood.confidence > confidence) {
             mood = colorMood.mood;
             confidence = colorMood.confidence;
             indicators.push(`color_${color}`);
