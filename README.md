@@ -2,6 +2,12 @@
 
 A sophisticated AI-powered WhatsApp chatbot that ingests, stores, and recalls multimodal memories (text, images, audio) with advanced features like mood detection, geo-tagging, and semantic search.
 
+## 🎥 Demo Video
+
+[![WhatsApp Memory Assistant Demo](https://img.youtube.com/vi/K2dZieuZjnU/maxresdefault.jpg)](https://youtu.be/K2dZieuZjnU)
+
+**[📺 Watch Full Demo](https://youtu.be/K2dZieuZjnU)** - See the complete WhatsApp Memory Assistant in action!
+
 ## 🌟 Features
 
 ### Core Functionality
@@ -380,9 +386,8 @@ logger.info('Memory created', {
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/deepam-kapur/memory-jar/issues)
 - **Documentation**: [API Documentation](./API_DOCUMENTATION.md)
-- **Demo**: [Demo Video](https://youtu.be/your-demo-link)
+- **Demo**: [Demo Video](https://youtu.be/K2dZieuZjnU)
 
 ## 📄 License
 
