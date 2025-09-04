@@ -302,9 +302,19 @@ export class MultimodalService {
         text: description,
         imageUrl: storedFile.fileUrl,
         metadata: {
-          imageAnalysis,
-          embedding: imageEmbedding,
-          moodDetection: combinedMoodDetection,
+          imageAnalysis: {
+            description: imageAnalysis.description,
+            objects: imageAnalysis.objects?.slice(0, 5), // Limit objects to reduce size
+            categories: imageAnalysis.categories?.slice(0, 3), // Limit categories
+            hasText: imageAnalysis.hasText,
+            detectedMood: imageAnalysis.detectedMood
+          },
+          moodDetection: {
+            mood: combinedMoodDetection.mood,
+            confidence: combinedMoodDetection.confidence,
+            sentiment: combinedMoodDetection.sentiment,
+            intensity: combinedMoodDetection.intensity
+          },
           aiGenerated: !payload.Body, // Flag if description was AI-generated
           enhancedWithAI: true
         }
@@ -832,6 +842,9 @@ export class MultimodalService {
         return [];
       }
 
+      // Detect if this is an emotion-based query
+      const emotionQuery = this.detectEmotionQuery(query);
+      
       // Use ONLY Mem0 for semantic search - showcase full Mem0 capabilities!
       // Detect timeframe from query for better temporal search
       const timeframe = this.extractTimeframe(query);
@@ -910,15 +923,29 @@ export class MultimodalService {
         }
       }
 
+      // Apply emotion-based filtering if this is an emotion query
+      let filteredMemories = processedMemories;
+      if (emotionQuery) {
+        filteredMemories = this.filterMemoriesByEmotion(processedMemories, emotionQuery);
+        logger.info('Applied emotion filtering to search results', {
+          query,
+          detectedEmotion: emotionQuery,
+          originalCount: processedMemories.length,
+          filteredCount: filteredMemories.length
+        });
+      }
+
       logger.info('Semantic search completed successfully', {
         query,
         mem0ResultsCount: mem0Results.length,
         processedResultsCount: processedMemories.length,
+        finalResultsCount: filteredMemories.length,
+        emotionFiltered: !!emotionQuery,
         userId,
-        averageScore: processedMemories.reduce((sum, m) => sum + (typeof m.metadata?.['score'] === 'number' ? m.metadata['score'] : 0), 0) / processedMemories.length
+        averageScore: filteredMemories.reduce((sum, m) => sum + (typeof m.metadata?.['score'] === 'number' ? m.metadata['score'] : 0), 0) / filteredMemories.length
       });
 
-      return processedMemories;
+      return filteredMemories;
 
     } catch (error) {
       logger.error('Error in Mem0 semantic search', {
@@ -1195,6 +1222,74 @@ export class MultimodalService {
     }
 
     return Math.min(importance, 10);
+  }
+
+  /**
+   * Detect if query is asking about specific emotions
+   */
+  private detectEmotionQuery(query: string): string | null {
+    const lowercaseQuery = query.toLowerCase();
+    
+    // Map of emotion keywords to standardized emotions
+    const emotionMap: Record<string, string> = {
+      'stressed': 'stressed',
+      'stress': 'stressed', 
+      'stressful': 'stressed',
+      'anxious': 'anxious',
+      'anxiety': 'anxious',
+      'worried': 'anxious',
+      'happy': 'happy',
+      'joy': 'happy',
+      'joyful': 'happy',
+      'excited': 'excited',
+      'excitement': 'excited',
+      'sad': 'sad',
+      'sadness': 'sad',
+      'depressed': 'sad',
+      'angry': 'angry',
+      'anger': 'angry',
+      'frustrated': 'angry',
+      'grateful': 'grateful',
+      'thankful': 'grateful',
+      'confused': 'confused',
+      'overwhelmed': 'overwhelmed'
+    };
+
+    // Check for emotion keywords in the query
+    for (const [keyword, emotion] of Object.entries(emotionMap)) {
+      if (lowercaseQuery.includes(keyword)) {
+        return emotion;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Filter memories by detected emotion/mood
+   */
+  private filterMemoriesByEmotion(memories: ProcessedMemory[], targetEmotion: string): ProcessedMemory[] {
+    return memories.filter(memory => {
+      // Check tags first (most reliable)
+      const tags = memory.metadata?.['tags'] as string[] || [];
+      if (tags.some(tag => tag.toLowerCase() === targetEmotion.toLowerCase())) {
+        return true;
+      }
+
+      // Check mood detection metadata
+      const moodDetection = memory.metadata?.['moodDetection'] as any;
+      if (moodDetection?.mood?.toLowerCase() === targetEmotion.toLowerCase()) {
+        return true;
+      }
+
+      // Check if emotion is mentioned in the content itself
+      const content = memory.content?.toLowerCase() || '';
+      if (content.includes(targetEmotion.toLowerCase())) {
+        return true;
+      }
+
+      return false;
+    });
   }
 }
 
