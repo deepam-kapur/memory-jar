@@ -90,10 +90,10 @@ export class AnalyticsController {
       const reminderStats = await reminderService.getReminderStats();
 
       // Get mood detection statistics from memories with mood data
-      const moodStats = await this.getMoodStatistics();
+      const moodStats = await AnalyticsController.getMoodStatistics();
 
       // Get geo-tagging statistics
-      const geoStats = await this.getGeoTaggingStatistics();
+      const geoStats = await AnalyticsController.getGeoTaggingStatistics();
 
       // Get interactions by message type (manual grouping)
       const allInteractions = await db.interaction.findMany({
@@ -177,28 +177,8 @@ export class AnalyticsController {
     try {
       const db = getDatabase();
 
-      // Count memories with mood detection metadata
+      // Count memories with mood detection metadata - simplified approach
       const memoriesWithMood = await db.memory.findMany({
-        where: {
-          // Look for memories that have mood detection in their tags or were processed with AI
-          OR: [
-            {
-              tags: {
-                hasSome: ['happy', 'sad', 'excited', 'stressed', 'anxious', 'angry', 'grateful', 'confused', 'neutral']
-              }
-            },
-            {
-              tags: {
-                hasSome: ['positive', 'negative', 'neutral']
-              }
-            },
-            {
-              tags: {
-                hasSome: ['intensity_low', 'intensity_medium', 'intensity_high']
-              }
-            }
-          ]
-        },
         select: {
           tags: true,
         }
@@ -290,17 +270,18 @@ export class AnalyticsController {
     try {
       const db = getDatabase();
 
-      // Count memories with location tags
-      const memoriesWithLocation = await db.memory.findMany({
-        where: {
-          tags: {
-            hasSome: ['location', 'location_whatsapp_location', 'location_text_extraction']
-          }
-        },
+      // Count memories with location tags - simplified approach
+      const allMemoriesForLocation = await db.memory.findMany({
         select: {
           tags: true,
         }
       });
+
+      const memoriesWithLocation = allMemoriesForLocation.filter(memory => 
+        Array.isArray(memory.tags) && memory.tags.some((tag: any) => 
+          typeof tag === 'string' && ['location', 'location_whatsapp_location', 'location_text_extraction'].includes(tag)
+        )
+      );
 
       const totalMemoriesWithLocation = memoriesWithLocation.length;
 

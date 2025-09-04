@@ -2,6 +2,7 @@ import twilio from 'twilio';
 import { env } from '../config/environment';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
+import fetch from 'node-fetch';
 
 export interface TwilioWebhookPayload {
   MessageSid: string;
@@ -60,7 +61,7 @@ export interface MediaInfo {
   contentType: string;
 }
 
-export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'VIDEO' | 'DOCUMENT';
+export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'VIDEO' | 'DOCUMENT' | 'LOCATION';
 
 export interface ProcessedMessage {
   messageSid: string;
@@ -81,8 +82,16 @@ export class TwilioService {
     // For testing, use a mock client if credentials are test values
     if (env.TWILIO_ACCOUNT_SID.startsWith('AC') && env.TWILIO_AUTH_TOKEN !== 'test_auth_token') {
       this.client = twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+      logger.debug('Twilio client initialized with real credentials', {
+        accountSidPrefix: env.TWILIO_ACCOUNT_SID.substring(0, 8) + '...',
+        hasAuthToken: !!env.TWILIO_AUTH_TOKEN
+      });
     } else {
       // Mock client for testing
+      logger.warn('Using mock Twilio client - media downloads may fail', {
+        accountSid: env.TWILIO_ACCOUNT_SID,
+        authToken: env.TWILIO_AUTH_TOKEN
+      });
       this.client = {} as twilio.Twilio;
     }
     this.webhookSecret = env.TWILIO_AUTH_TOKEN;
@@ -155,11 +164,11 @@ export class TwilioService {
       const contentType = payload[`MediaContentType${i}` as keyof TwilioWebhookPayload] as string;
       const mediaSid = payload[`MediaSid${i}` as keyof TwilioWebhookPayload] as string;
 
-      if (mediaUrl && contentType && mediaSid) {
+      if (mediaUrl && contentType) {
         mediaFiles.push({
           url: mediaUrl,
           contentType,
-          mediaSid,
+          mediaSid: mediaSid || `generated_${payload.MessageSid}_${i}`,
           index: i,
         });
       }
@@ -220,29 +229,148 @@ export class TwilioService {
   }
 
   /**
-   * Download media file from Twilio
+   * Download media file from Twilio (improved binary handling)
    */
   async downloadMedia(mediaUrl: string): Promise<Buffer> {
     try {
-      logger.debug('Downloading media from Twilio', { mediaUrl });
+      logger.debug('Downloading media from Twilio with proper binary handling', { mediaUrl });
 
-      // Twilio media URLs require authentication
-      const response = await this.client.request({
-        method: 'get',
-        uri: mediaUrl,
-        username: env.TWILIO_ACCOUNT_SID,
-        password: env.TWILIO_AUTH_TOKEN,
+      // Use fetch for proper binary handling with authentication
+      const auth = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
+      
+      const response = await fetch(mediaUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${auth}`,
+        },
       });
 
-      if (!response.body) {
-        throw new Error('Empty response body from Twilio media URL');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const buffer = Buffer.from(response.body, 'binary');
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
       
-      logger.debug('Media downloaded successfully', {
+      if (buffer.length === 0) {
+        throw new Error('Downloaded file is empty');
+      }
+
+      const contentStart = buffer.subarray(0, 16).toString('ascii');
+      
+      // Check if response is XML metadata (Twilio returns metadata first)
+      if (contentStart.includes('<?xml')) {
+        logger.debug('Received Twilio metadata, following redirect to actual media', {
+          mediaUrl,
+          responseSize: buffer.length
+        });
+
+        // Parse the XML to extract the actual media URL
+        const xmlContent = buffer.toString('utf8');
+        const locationMatch = xmlContent.match(/<Location[^>]*>\s*([^<]+)\s*<\/Location>/i);
+        
+        if (!locationMatch || !locationMatch[1]) {
+          logger.error('No location found in Twilio metadata', {
+            mediaUrl,
+            xmlContent: xmlContent.substring(0, 500)
+          });
+          throw new Error(`No media location found in Twilio response`);
+        }
+
+        const actualMediaUrl = locationMatch[1].trim();
+        
+        // Download the actual media from the redirect URL (no auth needed for direct URL)
+        logger.debug('Downloading actual media from redirect URL', { actualMediaUrl });
+        const mediaResponse = await fetch(actualMediaUrl, {
+          method: 'GET',
+        });
+
+        if (!mediaResponse.ok) {
+          throw new Error(`HTTP ${mediaResponse.status}: ${mediaResponse.statusText}`);
+        }
+
+        const mediaArrayBuffer = await mediaResponse.arrayBuffer();
+        const mediaBuffer = Buffer.from(mediaArrayBuffer);
+        
+        if (mediaBuffer.length === 0) {
+          throw new Error('Downloaded media file is empty');
+        }
+
+        const mediaContentStart = mediaBuffer.subarray(0, 16).toString('ascii');
+        const mediaContentHex = mediaBuffer.subarray(0, 16).toString('hex');
+
+        // Verify we got actual media content
+        if (mediaContentStart.includes('<?xml') || mediaContentStart.includes('<Error>')) {
+          const errorContent = mediaBuffer.toString('utf8');
+          logger.error('Redirect URL also returned XML error', {
+            actualMediaUrl,
+            errorContent: errorContent.substring(0, 500)
+          });
+          throw new Error(`Media redirect failed: ${errorContent}`);
+        }
+
+        // Detect actual audio format
+        const magic = mediaBuffer.subarray(0, 4).toString('hex');
+        let detectedFormat = 'unknown';
+        if (magic.startsWith('4f676753')) {
+          detectedFormat = 'OGG';
+        } else if (magic.startsWith('52494646')) {
+          detectedFormat = 'WAV';
+        } else if (magic.startsWith('494433') || magic.startsWith('fff3') || magic.startsWith('fff2')) {
+          detectedFormat = 'MP3';
+        }
+
+        // Validate minimum file size (audio files should be larger than this)
+        if (mediaBuffer.length < 100) {
+          logger.warn('Downloaded media file is suspiciously small', {
+            size: mediaBuffer.length,
+            actualMediaUrl
+          });
+        }
+
+        logger.info('Actual media downloaded successfully with proper binary handling', {
+          originalUrl: mediaUrl,
+          actualUrl: actualMediaUrl,
+          size: mediaBuffer.length,
+          contentStart: mediaContentStart.replace(/[^\x20-\x7E]/g, '.'), // Safe logging of binary content
+          contentHex: mediaContentHex,
+          detectedFormat,
+          magicBytes: magic
+        });
+
+        return mediaBuffer;
+      }
+      
+      // If it's not XML, assume it's already the media content
+      const contentHex = buffer.subarray(0, 16).toString('hex');
+      
+      // Detect actual audio format
+      const magic = buffer.subarray(0, 4).toString('hex');
+      let detectedFormat = 'unknown';
+      if (magic.startsWith('4f676753')) {
+        detectedFormat = 'OGG';
+      } else if (magic.startsWith('52494646')) {
+        detectedFormat = 'WAV';
+      } else if (magic.startsWith('494433') || magic.startsWith('fff3') || magic.startsWith('fff2')) {
+        detectedFormat = 'MP3';
+      }
+      
+      // Validate minimum file size (audio files should be larger than this)
+      if (buffer.length < 100) {
+        logger.warn('Downloaded media file is suspiciously small', {
+          size: buffer.length,
+          mediaUrl
+        });
+      }
+
+      logger.info('Direct media downloaded successfully with proper binary handling', {
         mediaUrl,
         size: buffer.length,
+        contentStart: contentStart.replace(/[^\x20-\x7E]/g, '.'), // Safe logging of binary content
+        contentHex,
+        detectedFormat,
+        magicBytes: magic,
+        isValidMedia: !contentStart.includes('<?xml')
       });
 
       return buffer;
@@ -288,6 +416,11 @@ export class TwilioService {
    * Get message type based on payload
    */
   getMessageType(payload: TwilioWebhookPayload): MessageType {
+    // Check for location message first
+    if (payload.Latitude && payload.Longitude) {
+      return 'LOCATION';
+    }
+    
     const numMedia = parseInt(payload.NumMedia || '0');
     
     if (numMedia === 0) {
@@ -308,6 +441,41 @@ export class TwilioService {
   }
 
   /**
+   * Get file extension from content type
+   */
+  private getExtensionFromContentType(contentType: string): string {
+    const contentTypeMap: Record<string, string> = {
+      // Audio formats (OpenAI Whisper compatible)
+      'audio/mpeg': 'mp3',    // ✅ Supported
+      'audio/mp3': 'mp3',     // ✅ Supported
+      'audio/wav': 'wav',     // ✅ Supported
+      'audio/mp4': 'm4a',     // ✅ Supported
+      'audio/webm': 'webm',   // ✅ Supported
+      'audio/flac': 'flac',   // ✅ Supported
+      'audio/ogg': 'ogg',     // ✅ Use OGG extension for OGG content
+      'audio/aac': 'aac',     // ⚠️ Will need fallback
+      // Image formats
+      'image/jpeg': 'jpg',
+      'image/jpg': 'jpg',
+      'image/png': 'png',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      // Video formats
+      'video/mp4': 'mp4',
+      'video/avi': 'avi',
+      'video/mov': 'mov',
+      'video/webm': 'webm',
+      // Document formats
+      'application/pdf': 'pdf',
+      'text/plain': 'txt',
+      'application/msword': 'doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    };
+
+    return contentTypeMap[contentType.toLowerCase()] || 'bin';
+  }
+
+  /**
    * Extract media information from payload
    */
   extractMediaInfo(payload: TwilioWebhookPayload): MediaInfo[] {
@@ -319,9 +487,11 @@ export class TwilioService {
       const contentType = payload[`MediaContentType${i}` as keyof TwilioWebhookPayload] as string;
       
       if (url && contentType) {
+        // Generate filename with proper extension based on content type
+        const extension = this.getExtensionFromContentType(contentType);
         mediaInfo.push({
           url,
-          filename: `media_${i}_${Date.now()}`,
+          filename: `media_${i}_${Date.now()}.${extension}`,
           contentType,
         });
       }

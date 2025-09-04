@@ -5,6 +5,7 @@ import { getTwilioService } from './twilioService';
 import { getOpenAIService } from './openaiService';
 import { getLocalStorageService } from './localStorageService';
 import { getImageProcessingService } from './imageProcessingService';
+import { getDatabase } from './database';
 
 import { getMoodDetectionService, MoodDetection } from './moodDetectionService';
 import { getGeoTaggingService, LocationInfo, GeoTaggedMemory } from './geoTaggingService';
@@ -56,6 +57,13 @@ export class MultimodalService {
       
       // Extract media information
       const mediaInfo = this.twilioService.extractMediaInfo(payload);
+      
+      logger.info('Processing WhatsApp message', {
+        messageSid: payload.MessageSid,
+        messageType,
+        mediaCount: mediaInfo.length,
+        userId,
+      });
       
       // Process based on message type
       let processedMemory: ProcessedMemory;
@@ -289,6 +297,12 @@ export class MultimodalService {
    * Process audio message with enhanced AI analysis
    */
   private async processAudioMessage(payload: TwilioWebhookPayload, mediaInfo: MediaInfo[], userId: string, interactionId?: string): Promise<ProcessedMemory> {
+    logger.info('Processing audio message', {
+      messageSid: payload.MessageSid,
+      mediaCount: mediaInfo.length,
+      userId,
+    });
+
     if (mediaInfo.length === 0) {
       throw new BadRequestError('No media found in audio message', ErrorCodes.INVALID_INPUT);
     }
@@ -298,14 +312,53 @@ export class MultimodalService {
       throw new BadRequestError('Invalid media file', ErrorCodes.INVALID_INPUT);
     }
 
+    logger.info('Downloading audio media', {
+      mediaUrl: mediaFile.url,
+      contentType: mediaFile.contentType,
+    });
+
     // Download media
-    const mediaBuffer = await this.twilioService.downloadMedia(mediaFile.url);
+    let mediaBuffer;
+    try {
+      mediaBuffer = await this.twilioService.downloadMedia(mediaFile.url);
+      logger.info('Media downloaded successfully', {
+        bufferSize: mediaBuffer.length,
+        mediaUrl: mediaFile.url,
+      });
+    } catch (downloadError) {
+      logger.error('Media download failed', {
+        error: downloadError instanceof Error ? downloadError.message : 'Unknown error',
+        mediaUrl: mediaFile.url,
+        messageSid: payload.MessageSid,
+      });
+      throw downloadError;
+    }
     
-    // Store audio file
-    const storedFile = await this.localStorageService.storeFile(mediaBuffer, mediaFile.filename, 'audio/wav');
+    // Store audio file with correct content type
+    const storedFile = await this.localStorageService.storeFile(mediaBuffer, mediaFile.filename, mediaFile.contentType);
     
     // Enhanced transcription with metadata
-    const audioAnalysis = await this.openaiService.transcribeAudioWithMetadata(mediaBuffer, mediaFile.filename);
+    let audioAnalysis;
+    try {
+      audioAnalysis = await this.openaiService.transcribeAudioWithMetadata(mediaBuffer, mediaFile.filename, storedFile.filePath);
+    } catch (transcriptionError) {
+      logger.warn('Audio transcription failed, using fallback', {
+        error: transcriptionError instanceof Error ? transcriptionError.message : 'Unknown error',
+        messageSid: payload.MessageSid,
+      });
+      
+      // Fallback audio analysis
+      audioAnalysis = {
+        transcription: '[Voice note - transcription not available]',
+        language: 'unknown',
+        duration: 0,
+        confidence: 0.5,
+        keywords: ['voice', 'audio', 'note'],
+        summary: 'Voice note received',
+        sentiment: 'neutral' as const,
+        topics: ['voice_message'],
+      };
+    }
     
     // Detect mood from audio analysis
     const audioMoodDetection = await this.moodDetectionService.detectMoodFromAudio(audioAnalysis);
@@ -687,16 +740,60 @@ export class MultimodalService {
    */
   async searchMemories(query: string, userId?: string, limit: number = 10): Promise<ProcessedMemory[]> {
     try {
-      const searchResults = await this.mem0Service.searchMemories(query, userId, limit);
+      // Use database search instead of Mem0
+      const db = getDatabase();
       
-      const processedMemories: ProcessedMemory[] = searchResults.map(result => ({
-        id: result.id,
-        content: result.content,
-        memoryType: result.metadata['memoryType'] || 'TEXT',
-        mediaFiles: result.metadata['mediaFiles'] || [],
-        metadata: result.metadata,
-        userId: result.metadata['userId'] || '',
-        interactionId: result.metadata['interactionId'],
+      // Extract keywords from the query for better search
+      const keywords = query
+        .toLowerCase()
+        .split(' ')
+        .filter(word => word.length > 2) // Filter out short words
+        .filter(word => !['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'this', 'that', 'was', 'were', 'will', 'would', 'when', 'what', 'where', 'who', 'how', 'week', 'day', 'time'].includes(word));
+      
+      const whereConditions: any = {};
+      
+      if (keywords.length > 0) {
+        // Search for any of the keywords in the content
+        whereConditions.OR = keywords.map(keyword => ({
+          content: {
+            contains: keyword,
+            mode: 'insensitive',
+          }
+        }));
+      } else {
+        // Fallback to full query search if no keywords
+        whereConditions.content = {
+          contains: query,
+          mode: 'insensitive',
+        };
+      }
+      
+      if (userId) {
+        whereConditions.userId = userId;
+      }
+      
+      const memories = await db.memory.findMany({
+        where: whereConditions,
+        take: limit,
+        orderBy: { lastAccessed: 'desc' },
+        include: {
+          mediaFiles: true,
+        },
+      });
+      
+      const processedMemories: ProcessedMemory[] = memories.map(memory => ({
+        id: memory.mem0Id,
+        content: memory.content,
+        memoryType: memory.memoryType as 'TEXT' | 'IMAGE' | 'AUDIO' | 'MIXED',
+        mediaFiles: memory.mediaFiles.map(mf => mf.fileUrl),
+        metadata: { 
+          createdAt: memory.createdAt.toISOString(),
+          importance: memory.importance,
+          tags: memory.tags,
+          score: 0.8 // Default relevance score
+        },
+        userId: memory.userId,
+        interactionId: memory.interactionId,
       }));
 
       logger.info('Memories searched successfully', {

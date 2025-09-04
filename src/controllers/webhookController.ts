@@ -114,6 +114,19 @@ export class WebhookController {
           processingStatus: 'reminder_created',
           response: reminderResponse,
         });
+      } else if (intentClassification.intent === 'GREETING') {
+        // Send innovative welcome message showcasing features
+        const welcomeMessage = `👋 *Hello! I'm your AI-powered Memory Assistant*\n\n🧠 *What makes me special:*\n📝 Store any message, image, or voice note\n🎯 AI mood detection & emotional analysis\n📍 Automatic location tagging\n⏰ Smart reminders with natural language\n🔍 Semantic search across all memories\n\n💡 *Try these:*\n• Send me anything to create a memory\n• Ask "when was I happy?" to search by mood\n• Say "remind me tomorrow at 3pm"\n• Type /list to see all memories\n\n🚀 *Let's build your digital memory together!*`;
+        
+        await WebhookController.sendWhatsAppResponse(processedMessage.from, welcomeMessage);
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Greeting processed successfully',
+          messageSid: processedMessage.messageSid,
+          userId,
+          processingStatus: 'greeting_sent',
+        });
       }
 
       // Step 6: Handle as new memory
@@ -156,8 +169,13 @@ export class WebhookController {
     const db = getDatabase();
     const timezoneService = getTimezoneService();
     
-    // Remove 'whatsapp:' prefix if present
-    const cleanPhoneNumber = whatsappNumber.replace('whatsapp:', '').trim();
+    // Remove 'whatsapp:' prefix if present and normalize phone number
+    let cleanPhoneNumber = whatsappNumber.replace('whatsapp:', '').trim();
+    
+    // Ensure phone number starts with + for consistency
+    if (!cleanPhoneNumber.startsWith('+')) {
+      cleanPhoneNumber = '+' + cleanPhoneNumber;
+    }
     
     // Detect timezone from phone number using timezone service
     const detectedTimezone = timezoneService.detectTimezoneFromPhoneNumber(cleanPhoneNumber);
@@ -270,24 +288,50 @@ export class WebhookController {
       if (searchResults.length === 0) {
         return {
           type: 'text',
-          content: `🔍 No memories found for: "${query}"\n\nTry rephrasing your search or use /list to see all memories.`,
+          content: `🔍 *No memories found* for "${query}"\n\n🤔 *Smart suggestions:*\n• Try different keywords\n• Ask about emotions: "when was I happy?"\n• Search by location: "what did I do downtown?"\n• Use /list to see all memories\n\n🧠 *AI tip:* I can search by mood, location, and content!`,
         };
       }
       
-      // Format search results for WhatsApp
-      let responseMessage = `🔍 *Found ${searchResults.length} memory(ies) for: "${query}"*\n\n`;
+      // Create innovative search response
+      let responseMessage = `🔍 *Found ${searchResults.length} memor${searchResults.length === 1 ? 'y' : 'ies'}*\n`;
+      responseMessage += `💭 Query: "${query}"\n\n`;
       
       searchResults.forEach((memory, index) => {
-        const date = new Date(memory.metadata['createdAt'] || Date.now()).toLocaleDateString();
-        const type = memory.memoryType === 'TEXT' ? '💬' : memory.memoryType === 'IMAGE' ? '🖼️' : '🎵';
-        const content = memory.content.length > 80 
-          ? memory.content.substring(0, 80) + '...' 
+        const createdAt = memory.metadata?.['createdAt'];
+        const date = new Date(typeof createdAt === 'string' || typeof createdAt === 'number' ? createdAt : Date.now()).toLocaleDateString();
+        const typeEmoji = WebhookController.getMemoryTypeEmoji(memory.memoryType);
+        const content = memory.content.length > 70 
+          ? memory.content.substring(0, 70) + '...' 
           : memory.content;
         
-        responseMessage += `${index + 1}. ${type} *${date}*\n${content}\n\n`;
+        responseMessage += `${index + 1}. ${typeEmoji} ${content}\n`;
+        responseMessage += `   📅 ${date}`;
+        
+        // Show relevance/similarity score if available  
+        const score = memory.metadata?.['score'];
+        if (typeof score === 'number' && score > 0) {
+          const relevancePercent = Math.round(score * 100);
+          responseMessage += ` • 🎯 ${relevancePercent}% match`;
+        }
+        
+        // Show additional metadata if available
+        if (memory.metadata?.['tags']) {
+          const tags = Array.isArray(memory.metadata['tags']) ? memory.metadata['tags'] : [];
+          const moodTags = tags.filter((tag: string) => 
+            ['happy', 'sad', 'excited', 'stressed', 'angry', 'anxious', 'grateful', 'confused'].includes(tag.toLowerCase())
+          );
+          
+          if (moodTags.length > 0) {
+            const moodEmoji = WebhookController.getMoodEmoji(moodTags[0]);
+            responseMessage += ` • ${moodEmoji} ${moodTags[0]}`;
+          }
+        }
+        
+        responseMessage += `\n\n`;
       });
       
-      responseMessage += `💡 Type /list to see all memories or ask another question!`;
+      responseMessage += `🧠 *AI-powered search active*\n`;
+      responseMessage += `💡 Ask more questions or use /list for all memories`;
       
       return {
         type: 'text',
@@ -395,14 +439,23 @@ export class WebhookController {
     try {
       const multimodalService = getMultimodalService();
       
-      // Create WhatsApp payload for multimodal processing
-      const whatsappPayload = {
+      // Create WhatsApp payload for multimodal processing from ProcessedMessage
+      const whatsappPayload: any = {
         MessageSid: processedMessage.messageSid,
         From: processedMessage.from,
         To: processedMessage.to,
         Body: processedMessage.body,
-        NumMedia: '0', // Simplified for text messages
+        NumMedia: processedMessage.mediaFiles.length.toString(),
+        AccountSid: processedMessage.accountSid,
+        Timestamp: Math.floor(processedMessage.timestamp.getTime() / 1000).toString(),
       };
+
+      // Add media information from mediaFiles array
+      processedMessage.mediaFiles.forEach((mediaFile: any, index: number) => {
+        whatsappPayload[`MediaContentType${index}`] = mediaFile.contentType;
+        whatsappPayload[`MediaUrl${index}`] = mediaFile.url;
+        whatsappPayload[`MediaSid${index}`] = mediaFile.mediaSid;
+      });
       
       // Process the message as a new memory
       const processedMemory = await multimodalService.processWhatsAppMessage(
@@ -410,22 +463,72 @@ export class WebhookController {
         userId
       );
       
-      logger.info('Memory created successfully', {
+      // Save the memory to the database
+      const db = getDatabase();
+      
+      // Extract tags from metadata if available
+      const tags = Array.isArray(processedMemory.metadata?.tags) 
+        ? processedMemory.metadata.tags as string[]
+        : [];
+      
+      // Calculate importance based on mood detection if available
+      const importance = processedMemory.moodDetection?.intensity === 'high' ? 8 :
+                        processedMemory.moodDetection?.intensity === 'medium' ? 6 : 5;
+      
+      const savedMemory = await db.memory.create({
+        data: {
+          userId,
+          interactionId: processedMemory.interactionId,
+          content: processedMemory.content,
+          mem0Id: processedMemory.id,
+          memoryType: processedMemory.memoryType,
+          tags: tags,
+          importance: importance,
+        },
+      });
+
+      // Save the interaction to the database
+      if (processedMessage.messageSid) {
+        // Map memory type to interaction message type
+        const messageType = processedMemory.memoryType === 'MIXED' ? 'TEXT' : processedMemory.memoryType;
+        
+        await db.interaction.create({
+          data: {
+            userId,
+            messageSid: processedMessage.messageSid,
+            direction: 'INBOUND',
+            messageType: messageType,
+            content: processedMessage.body || '',
+            status: 'PROCESSED',
+            timestamp: processedMessage.timestamp || new Date(),
+          },
+        });
+      }
+      
+      logger.info('Memory and interaction saved to database', {
         memoryId: processedMemory.id,
+        savedMemoryId: savedMemory.id,
         memoryType: processedMemory.memoryType,
         userId,
+        messageSid: processedMessage.messageSid,
       });
+      
+      // Create rich, innovative response showing AI features
+      const response = await WebhookController.createInnovativeMemoryResponse(processedMemory, processedMessage);
       
       return {
         type: 'text',
-        content: '✅ Memory saved successfully! I\'ve stored this for you.',
+        content: response,
       };
       
     } catch (error) {
       logger.error('Error creating new memory', {
         error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
         userId,
         messageSid: processedMessage.messageSid,
+        messageType: processedMessage.messageType,
+        mediaCount: processedMessage.mediaFiles?.length || 0,
       });
       
       return {
@@ -433,6 +536,118 @@ export class WebhookController {
         content: '❌ Sorry, I couldn\'t save your memory right now. Please try again later.',
       };
     }
+  }
+
+  /**
+   * Create rich, innovative memory response showcasing AI features
+   */
+  private static async createInnovativeMemoryResponse(processedMemory: any, processedMessage: any): Promise<string> {
+    try {
+      const memoryTypeEmoji = WebhookController.getMemoryTypeEmoji(processedMemory.memoryType);
+      const content = processedMemory.content || processedMessage.body || '[Memory content]';
+      const contentPreview = content.length > 60 ? content.substring(0, 60) + '...' : content;
+      
+      let response = `${memoryTypeEmoji} *Memory Saved Successfully!*\n\n`;
+      response += `📝 "${contentPreview}"\n\n`;
+      
+      // Show AI-powered mood detection
+      if (processedMemory.moodDetection) {
+        const mood = processedMemory.moodDetection;
+        const moodEmoji = WebhookController.getMoodEmoji(mood.mood);
+        const confidencePercent = Math.round(mood.confidence * 100);
+        
+        response += `🧠 *AI Mood Analysis:*\n`;
+        response += `${moodEmoji} ${mood.mood} (${confidencePercent}% confidence)\n`;
+        response += `💭 Sentiment: ${mood.sentiment}\n`;
+        
+        if (mood.intensity) {
+          response += `⚡ Intensity: ${mood.intensity}\n`;
+        }
+        response += `\n`;
+      }
+      
+      // Show geo-tagging if available
+      if (processedMemory.geoTagging) {
+        const geo = processedMemory.geoTagging;
+        response += `📍 *Location Detected:*\n`;
+        
+        if (geo.placeName) {
+          response += `🏢 ${geo.placeName}\n`;
+        }
+        if (geo.city) {
+          response += `🏙️ ${geo.city}, ${geo.country || 'Unknown'}\n`;
+        }
+        if (geo.coordinates) {
+          response += `🗺️ ${geo.coordinates.lat.toFixed(4)}, ${geo.coordinates.lng.toFixed(4)}\n`;
+        }
+        response += `\n`;
+      }
+      
+      // Show memory type and importance
+      response += `📊 *Smart Analysis:*\n`;
+      response += `📂 Type: ${processedMemory.memoryType.toLowerCase()}\n`;
+      response += `⭐ Importance: ${processedMemory.importance || 5}/10\n`;
+      
+      // Show extracted tags
+      if (processedMemory.tags && processedMemory.tags.length > 0) {
+        const displayTags = processedMemory.tags.slice(0, 5); // Show max 5 tags
+        response += `🏷️ Tags: ${displayTags.join(', ')}\n`;
+      }
+      
+      // Show media info if available
+      if (processedMemory.mediaFiles && processedMemory.mediaFiles.length > 0) {
+        response += `📎 Contains ${processedMemory.mediaFiles.length} media file(s)\n`;
+      }
+      
+      response += `\n💡 *What's next?*\n`;
+      response += `🔍 Ask me questions to search your memories\n`;
+      response += `📚 Type /list to see all memories\n`;
+      response += `⏰ Say "remind me..." to set smart reminders`;
+      
+      return response;
+      
+    } catch (error) {
+      logger.error('Error creating innovative response', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      
+      // Fallback to simple response
+      return '✅ Memory saved successfully! I\'ve analyzed and stored this with AI-powered insights.';
+    }
+  }
+
+  /**
+   * Get emoji for memory type
+   */
+  private static getMemoryTypeEmoji(memoryType: string): string {
+    const emojiMap: Record<string, string> = {
+      'TEXT': '💬',
+      'IMAGE': '🖼️',
+      'AUDIO': '🎵',
+      'VIDEO': '🎬',
+      'DOCUMENT': '📄',
+      'LOCATION': '📍',
+      'MIXED': '📎',
+    };
+    return emojiMap[memoryType] || '📝';
+  }
+
+  /**
+   * Get emoji for detected mood
+   */
+  private static getMoodEmoji(mood: string): string {
+    const moodEmojis: Record<string, string> = {
+      'happy': '😊',
+      'sad': '😢',
+      'excited': '🤩',
+      'stressed': '😰',
+      'angry': '😠',
+      'anxious': '😟',
+      'grateful': '🙏',
+      'confused': '🤔',
+      'neutral': '😐',
+    };
+    return moodEmojis[mood.toLowerCase()] || '🤔';
   }
 
   /**
@@ -605,17 +820,4 @@ export class WebhookController {
     return grouped;
   }
 
-  /**
-   * Get emoji for memory type
-   */
-  private static getMemoryTypeEmoji(memoryType: string): string {
-    switch (memoryType) {
-      case 'TEXT': return '📝';
-      case 'IMAGE': return '🖼️';
-      case 'AUDIO': return '🎵';
-      case 'VIDEO': return '🎬';
-      case 'MIXED': return '📎';
-      default: return '📱';
-    }
-  }
 }

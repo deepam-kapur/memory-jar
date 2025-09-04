@@ -115,24 +115,34 @@ export class MemoryController {
     try {
       const { query, page = 1, limit = 20, userId, memoryType, tags, minImportance, maxImportance } = req.query;
       const db = getDatabase();
-      const mem0Service = getMem0Service();
 
-      // Search memories using Mem0 for semantic search
-      const mem0Results = await mem0Service.searchMemories(
-        query as string,
-        userId as string,
-        Number(limit) * 2 // Get more results to filter
-      );
-
-      // Extract memory IDs from Mem0 results
-      const memoryIds = mem0Results.map(result => result.id);
-
-      // Build where conditions for database filtering
-      const whereConditions: any = {
-        mem0Id: {
-          in: memoryIds,
-        },
-      };
+      // Search memories directly in database with text search
+      const whereConditions: any = {};
+      
+      if (query) {
+        // Extract keywords from the query for better search
+        const keywords = (query as string)
+          .toLowerCase()
+          .split(' ')
+          .filter(word => word.length > 2) // Filter out short words like "I", "is", "was"
+          .filter(word => !['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'this', 'that', 'was', 'were', 'will', 'would', 'when', 'what', 'where', 'who', 'how', 'week', 'day', 'time'].includes(word));
+        
+        if (keywords.length > 0) {
+          // Search for any of the keywords in the content
+          whereConditions.OR = keywords.map(keyword => ({
+            content: {
+              contains: keyword,
+              mode: 'insensitive',
+            }
+          }));
+        } else {
+          // Fallback to full query search if no keywords
+          whereConditions.content = {
+            contains: query as string,
+            mode: 'insensitive',
+          };
+        }
+      }
 
       // Add optional filters
       if (userId) {
@@ -198,10 +208,9 @@ export class MemoryController {
         await Promise.all(updatePromises);
       }
 
-      logger.info('Memories searched with Mem0', {
+      logger.info('Memories searched in database', {
         query,
         resultsCount: memories.length,
-        mem0ResultsCount: mem0Results.length,
         total,
         filters: { userId, memoryType, tags, minImportance, maxImportance },
         requestId: req.id,

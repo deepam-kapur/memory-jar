@@ -29,6 +29,9 @@ const envSchema = z.object({
   // OpenAI Configuration
   OPENAI_API_KEY: z.string().default('your_openai_api_key'),
 
+  // Deepgram Configuration (alternative transcription service)
+  DEEPGRAM_API_KEY: z.string().default(''),
+
   // Logging Configuration
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
   LOG_FILE: z.string().default('logs/app.log'),

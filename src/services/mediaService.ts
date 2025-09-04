@@ -1,6 +1,7 @@
 import crypto from 'crypto';
+import fetch from 'node-fetch';
 import { getDatabase } from './database';
-import { getLocalStorageService, StoredFile } from './localStorageService';
+import { getLocalStorageService } from './localStorageService';
 import { getTwilioService } from './twilioService';
 import { Prisma } from '../generated/prisma';
 import logger from '../config/logger';
@@ -110,7 +111,7 @@ export class MediaService {
     interactionId?: string,
     memoryId?: string,
     transcription?: string,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ): Promise<MediaFile> {
     const db = getDatabase();
     const localStorageService = getLocalStorageService();
@@ -284,7 +285,7 @@ export class MediaService {
     interactionId?: string,
     memoryId?: string,
     transcription?: string,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ): Promise<MediaFile> {
     try {
       logger.info('Starting media download and storage', { 
@@ -453,7 +454,7 @@ export class MediaService {
           metadata: {
             path: ['isReference'],
             equals: false,
-          } as any,
+          },
         },
       }),
       db.mediaFile.findMany({
