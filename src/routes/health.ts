@@ -25,7 +25,7 @@ router.get('/detailed', async (_req, res) => {
     const [dbHealth, dbStats, mem0Health, openaiHealth, localStorageHealth] = await Promise.allSettled([
       checkDatabaseHealth(),
       getDatabaseStats(),
-      getMem0Service().healthCheck(),
+      Promise.resolve({ status: getMem0Service().isMemoryServiceConnected() ? 'connected' : 'disconnected' }),
       getOpenAIService().healthCheck(),
       getLocalStorageService().healthCheck(),
     ]);
@@ -49,7 +49,7 @@ router.get('/detailed', async (_req, res) => {
       },
       services: {
         database: dbHealth.status === 'fulfilled' ? dbHealth.value.status : 'unhealthy',
-        mem0: mem0Health.status === 'fulfilled' ? (mem0Health.value ? 'healthy' : 'unhealthy') : 'unhealthy',
+        mem0: mem0Health.status === 'fulfilled' ? mem0Health.value.status : 'unhealthy',
         openai: openaiHealth.status === 'fulfilled' ? openaiHealth.value.status : 'unhealthy',
         localStorage: localStorageHealth.status === 'fulfilled' ? localStorageHealth.value.status : 'unhealthy',
       },
@@ -78,13 +78,13 @@ router.get('/ready', async (_req, res) => {
     // Check all critical service health
     const [dbHealth, mem0Health, openaiHealth, localStorageHealth] = await Promise.allSettled([
       checkDatabaseHealth(),
-      getMem0Service().healthCheck(),
+      Promise.resolve({ status: getMem0Service().isMemoryServiceConnected() ? 'connected' : 'disconnected' }),
       getOpenAIService().healthCheck(),
       getLocalStorageService().healthCheck(),
     ]);
     
     const isDbHealthy = dbHealth.status === 'fulfilled' && dbHealth.value.status === 'healthy';
-    const isMem0Healthy = mem0Health.status === 'fulfilled' && mem0Health.value === true;
+    const isMem0Healthy = mem0Health.status === 'fulfilled' && mem0Health.value.status === 'healthy';
     const isOpenAIHealthy = openaiHealth.status === 'fulfilled' && openaiHealth.value.status === 'healthy';
     const isLocalStorageHealthy = localStorageHealth.status === 'fulfilled' && localStorageHealth.value.status === 'healthy';
     

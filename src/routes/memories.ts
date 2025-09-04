@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/errorHandler';
 import { validate } from '../middleware/validation';
-import { searchLimiter, apiLimiter, userSearchLimiter, userMemoryLimiter } from '../middleware/rateLimit';
+import { searchLimiter, apiLimiter } from '../middleware/rateLimit';
 import { MemoryController } from '../controllers/memoryController';
 import { 
   createMemorySchema, 
@@ -22,7 +22,6 @@ const router = Router();
 router.post(
   '/',
   apiLimiter,
-  userMemoryLimiter, // Add per-user rate limiting
   validate(createMemorySchema, 'body'),
   asyncHandler(MemoryController.createMemory)
 );
@@ -37,7 +36,6 @@ router.post(
 router.get(
   '/',
   searchLimiter,
-  userSearchLimiter, // Add per-user search rate limiting
   validate(searchMemoriesSchema, 'query'),
   asyncHandler(MemoryController.searchMemories)
 );

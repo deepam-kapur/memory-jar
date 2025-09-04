@@ -4,10 +4,11 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { env, isDevelopment } from './config/environment';
 import { initializeDatabase, closeDatabase } from './services/database';
+import { getReminderService } from './services/reminderService';
 
 // Import middleware
 import { requestLogger, errorLogger } from './config/logger';
-import { sanitize, validateContentSecurityPolicy } from './middleware/validation';
+import { sanitize } from './middleware/validation';
 import { suspiciousActivityLimiter } from './middleware/rateLimit';
 import { errorHandler, notFoundHandler, timeoutHandler } from './middleware/errorHandler';
 
@@ -18,6 +19,8 @@ import memoryRoutes from './routes/memories';
 import interactionRoutes from './routes/interactions';
 import analyticsRoutes from './routes/analytics';
 import mediaRoutes from './routes/media';
+import reminderRoutes from './routes/reminders';
+import sharingRoutes from './routes/sharing';
 
 // Create Express application
 const app = express();
@@ -36,28 +39,22 @@ app.use(helmet({
 
 // CORS configuration
 app.use(cors({
-  origin: isDevelopment ? ['http://localhost:3000', 'http://localhost:3001'] : (env.CORS_ORIGIN ? [env.CORS_ORIGIN] : false),
+  origin: isDevelopment ? ['http://localhost:3000', 'http://localhost:3001'] : [],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-API-Key'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 
 // Request timeout handler
-app.use(timeoutHandler(300000)); // 30 seconds
+app.use(timeoutHandler(30000)); // 30 seconds
 
 // Request logging
 app.use(morgan(isDevelopment ? 'dev' : 'combined'));
 app.use(requestLogger);
 
-// Body parsing middleware - but exclude webhook route
+// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
-app.use((req, res, next) => {
-  // Skip URL encoding for webhook route - we'll handle it manually
-  if (req.path === '/webhook') {
-    return next();
-  }
-  express.urlencoded({ extended: true, limit: '10mb' })(req, res, next);
-});
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Request ID middleware for tracking
 app.use((req, _res, next) => {
@@ -67,9 +64,6 @@ app.use((req, _res, next) => {
 
 // Input sanitization
 app.use(sanitize);
-
-// Security headers
-app.use(validateContentSecurityPolicy);
 
 // Rate limiting
 app.use(suspiciousActivityLimiter);
@@ -81,6 +75,8 @@ app.use(suspiciousActivityLimiter);
   app.use('/interactions', interactionRoutes);
   app.use('/analytics', analyticsRoutes);
   app.use('/media', mediaRoutes);
+  app.use('/reminders', reminderRoutes);
+  app.use('/sharing', sharingRoutes);
 
 // Root endpoint
 app.get('/', (_req, res) => {
@@ -97,6 +93,7 @@ app.get('/', (_req, res) => {
       memoriesList: '/memories/list (GET) - List all memories from DB',
       interactions: '/interactions/recent (GET) - Recent interactions',
       analytics: '/analytics/summary (GET) - Database analytics',
+      reminders: '/reminders (POST/GET) - Scheduled reminder management',
     },
   });
 });
@@ -116,6 +113,15 @@ const gracefulShutdown = (signal: string) => {
   
   server.close(async () => {
     console.log('✅ HTTP server closed');
+    
+    // Stop reminder service
+    try {
+      const reminderService = getReminderService();
+      reminderService.stop();
+      console.log('✅ Reminder service stopped');
+    } catch (error) {
+      console.error('❌ Error stopping reminder service:', error);
+    }
     
     // Close database connection
     await closeDatabase();
@@ -140,6 +146,14 @@ const server = app.listen(env.PORT, env.HOST, async () => {
   } catch (error) {
      
     console.error('❌ Failed to initialize database:', error);
+  }
+
+  // Initialize reminder service
+  try {
+    getReminderService();
+    console.log('✅ Reminder service initialized and background job started');
+  } catch (error) {
+    console.error('❌ Failed to initialize reminder service:', error);
   }
 
    

@@ -126,9 +126,8 @@ async function main() {
       originalName: 'IMG_2024_01_15.jpg',
       fileType: 'image/jpeg',
       fileSize: 2048576, // 2MB
-      storageKey: 'uploads/user1/car_photo.jpg',
-      storageUrl: 'https://s3.amazonaws.com/memory-jar/uploads/user1/car_photo.jpg',
-      fingerprint: 'sha256:abc123def456car_photo_fingerprint',
+      s3Key: 'uploads/user1/car_photo.jpg',
+      s3Url: 'https://s3.amazonaws.com/memory-jar/uploads/user1/car_photo.jpg',
       metadata: {
         width: 1920,
         height: 1080,
@@ -146,9 +145,8 @@ async function main() {
       originalName: 'Voice_Note_001.m4a',
       fileType: 'audio/mp4',
       fileSize: 1048576, // 1MB
-      storageKey: 'uploads/user2/voice_note.m4a',
-      storageUrl: 'https://s3.amazonaws.com/memory-jar/uploads/user2/voice_note.m4a',
-      fingerprint: 'sha256:def789ghi012voice_note_fingerprint',
+      s3Key: 'uploads/user2/voice_note.m4a',
+      s3Url: 'https://s3.amazonaws.com/memory-jar/uploads/user2/voice_note.m4a',
       transcription: 'This is a transcription of the voice note about project ideas.',
       metadata: {
         duration: 30, // seconds

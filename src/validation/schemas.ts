@@ -3,7 +3,11 @@ import { z } from 'zod';
 // Common validation schemas
 export const phoneNumberSchema = z
   .string()
-  .regex(/^\+[1-9]\d{1,14}$/, 'Phone number must be in E.164 format (e.g., +1234567890)');
+  .regex(/^(whatsapp:)?\+[1-9]\d{8,14}$/, 'Phone number must be in E.164 format (e.g., +1234567890) or WhatsApp format');
+
+export const cuidSchema = z
+  .string()
+  .regex(/^c[a-z0-9]{23,24}$/, 'Must be a valid CUID');
 
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -17,33 +21,14 @@ export const searchSchema = z.object({
 
 // WhatsApp webhook schemas
 export const whatsAppWebhookSchema = z.object({
-  // Message identifiers - Twilio sends both MessageSid and SmsMessageSid
-  MessageSid: z.string().optional(),
-  SmsMessageSid: z.string().optional(),
-  SmsSid: z.string().optional(),
-  
-  // Basic message info
-  From: z.string(),
-  To: z.string(),
+  MessageSid: z.string(),
+  From: z.string().min(1),
+  To: z.string().min(1),
   Body: z.string().optional(),
-  
-  // Message metadata
-  MessageType: z.string().optional(),
-  SmsStatus: z.string().optional(),
   NumMedia: z.coerce.number().int().min(0).max(10).optional(),
-  NumSegments: z.coerce.number().int().min(0).optional(),
-  ReferralNumMedia: z.coerce.number().int().min(0).optional(),
-  
-  // Account and service info
   AccountSid: z.string().optional(),
-  MessagingServiceSid: z.string().optional(),
   ApiVersion: z.string().optional(),
   Timestamp: z.string().optional(),
-  
-  // WhatsApp specific fields
-  WaId: z.string().optional(),
-  ProfileName: z.string().optional(),
-  ChannelMetadata: z.string().optional(),
   MediaUrl0: z.string().url().optional(),
   MediaUrl1: z.string().url().optional(),
   MediaUrl2: z.string().url().optional(),
@@ -82,14 +67,9 @@ export const whatsAppWebhookSchema = z.object({
   Address: z.string().optional(),
   Label: z.string().optional(),
   DisplayName: z.string().optional(),
-}).passthrough() // Allow additional fields for testing
-.refine(
-  (data) => data.MessageSid || data.SmsMessageSid || data.SmsSid,
-  {
-    message: "At least one message ID field (MessageSid, SmsMessageSid, or SmsSid) is required",
-    path: ["MessageSid"],
-  }
-);
+  ProfileName: z.string().optional(),
+  WaId: z.string().optional(),
+}).passthrough(); // Allow additional fields for testing
 
 // Query message schema for testing
 export const queryMessageSchema = z.object({
@@ -129,8 +109,8 @@ export const createMediaFileSchema = z.object({
   originalName: z.string().min(1).max(255),
   fileType: z.string().min(1).max(100),
   fileSize: z.number().int().min(1),
-  storageKey: z.string().min(1).max(500),
-  storageUrl: z.string().url(),
+  s3Key: z.string().min(1).max(500),
+  s3Url: z.string().url(),
   transcription: z.string().optional(),
   metadata: z.record(z.string(), z.any()).optional(),
 });
@@ -165,6 +145,62 @@ export const getAnalyticsSchema = z.object({
   ...paginationSchema.shape,
 });
 
+// Reminder schemas
+export const createReminderSchema = z.object({
+  userId: z.string().cuid(),
+  memoryId: z.string().cuid(),
+  scheduledFor: z.string().datetime().optional(),
+  naturalLanguageTime: z.string().min(1).max(200).optional(),
+  message: z.string().min(1).max(1000),
+  timezone: z.string().optional(),
+}).refine(
+  (data) => data.scheduledFor || data.naturalLanguageTime,
+  {
+    message: "Either scheduledFor or naturalLanguageTime must be provided",
+    path: ["scheduledFor", "naturalLanguageTime"],
+  }
+);
+
+export const getReminderSchema = z.object({
+  userId: z.string().cuid(),
+  status: z.enum(['PENDING', 'SENT', 'CANCELLED']).optional(),
+  ...paginationSchema.shape,
+});
+
+export const cancelReminderSchema = z.object({
+  id: z.string().cuid(),
+});
+
+// Memory sharing schemas
+export const shareMemorySchema = z.object({
+  memoryId: z.string().cuid(),
+  fromUserId: z.string().cuid(),
+  toPhoneNumber: z.string().min(10).max(15).regex(/^\+?[\d\s\-()]+$/),
+  message: z.string().max(500).optional(),
+});
+
+export const acceptShareSchema = z.object({
+  toUserId: z.string().cuid(),
+  copyToMyMemories: z.boolean().default(true),
+});
+
+export const rejectShareSchema = z.object({
+  toUserId: z.string().cuid(),
+});
+
+export const respondToShareSchema = z.object({
+  shareId: z.string().cuid(),
+  userId: z.string().cuid(),
+  action: z.enum(['accept', 'reject']),
+  message: z.string().max(500).optional(),
+});
+
+export const getUserSharesSchema = z.object({
+  userId: z.string().cuid(),
+  type: z.enum(['sent', 'received', 'all']).default('all'),
+  status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']).optional(),
+});
+
 // Export all schemas
 export const schemas = {
   // Common
@@ -186,4 +222,16 @@ export const schemas = {
   // Analytics
   createAnalytics: createAnalyticsSchema,
   getAnalytics: getAnalyticsSchema,
+  
+  // Reminders
+  createReminder: createReminderSchema,
+  getReminder: getReminderSchema,
+  cancelReminder: cancelReminderSchema,
+  
+  // Memory Sharing
+  shareMemory: shareMemorySchema,
+  acceptShare: acceptShareSchema,
+  rejectShare: rejectShareSchema,
+  respondToShare: respondToShareSchema,
+  getUserShares: getUserSharesSchema,
 };

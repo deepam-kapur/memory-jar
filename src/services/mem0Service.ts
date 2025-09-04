@@ -1,13 +1,14 @@
+import { MemoryClient } from 'mem0ai';
 import { env } from '../config/environment';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
-import { Memory } from 'mem0ai/oss';
+
 export interface CreateMemoryOptions {
   content: {
     text?: string;
     imageUrl?: string;
     audioUrl?: string;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
   };
   userId: string;
   interactionId?: string;
@@ -19,654 +20,456 @@ export interface CreateMemoryOptions {
 export interface MemorySearchResult {
   id: string;
   content: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   score: number;
 }
 
 export class Mem0Service {
-  private memory: any = null;
-  private memoryStore: Map<string, any> = new Map(); // Fallback storage
-  private memoryCounter = 0;
-  private isInitialized = false;
-  private usePackage = false;
+  private client: MemoryClient | null = null;
+  private isConnected: boolean = false;
 
   constructor() {
-    this.initialize();
-  }
-
-  private async initialize(): Promise<void> {
-    try {
-      // Try to initialize mem0ai package
-      await this.initializePackage();
-    } catch (error) {
-      logger.warn('Failed to initialize mem0ai package, using fallback storage', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      await this.initializeFallback();
+    if (env.MEM0_API_KEY) {
+      try {
+        this.client = new MemoryClient({
+          apiKey: env.MEM0_API_KEY
+        });
+        this.isConnected = true;
+        logger.info('Mem0 client initialized successfully', {
+          hasApiKey: !!env.MEM0_API_KEY,
+          baseUrl: env.MEM0_BASE_URL || 'https://api.mem0.ai'
+        });
+      } catch (error) {
+        logger.error('Failed to initialize Mem0 client', {
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+        this.isConnected = false;
+      }
+    } else {
+      logger.warn('MEM0_API_KEY not provided, Mem0 functionality will be limited');
+      this.isConnected = false;
     }
   }
 
-  private async initializePackage(): Promise<void> {
-    try {
-      console.log('Initializing mem0ai package');
-      console.log(env.OPENAI_API_KEY)
-      
-      this.memory = new Memory({
-        version: 'v1.1',
-        embedder: {
-          provider: 'openai',
-          config: {
-            apiKey: env.OPENAI_API_KEY || '',
-            model: 'text-embedding-3-small',
-          },
-        },
-        vectorStore: {
-          provider: 'memory', // Uses in-memory storage
-          config: {
-            collectionName: 'memories',
-            dimension: 1536,
-          },
-        },
-        llm: {
-          provider: 'openai',
-          config: {
-            apiKey: env.OPENAI_API_KEY || '',
-            model: 'gpt-5-mini',
-          },
-        },
-        historyStore: {
-          provider: 'sqlite',
-          config: {},
-        },
-        disableHistory: false,
-        customPrompt: "You are a helpful memory assistant that stores and retrieves user memories efficiently.",
-      });
-
-      // Test the memory instance
-      await this.memory.search('health_check_test', { userId: 'system_health_check' });
-      
-      this.usePackage = true;
-      this.isInitialized = true;
-      
-      logger.info('Mem0 service initialized with npm package', {
-        service: 'memory-jar',
-        environment: env.NODE_ENV,
-      });
-    } catch (error) {
-      throw new Error(`Failed to initialize mem0ai package: ${error}`);
-    }
-  }
-
-  private async initializeFallback(): Promise<void> {
-    // Initialize simple in-memory storage
-    this.memoryStore.clear();
-    this.memoryCounter = 0;
-    this.usePackage = false;
-    this.isInitialized = true;
-    
-    logger.info('Mem0 service initialized with fallback local storage', {
-      service: 'memory-jar',
-      environment: env.NODE_ENV,
-    });
-  }
-
+  /**
+   * Create a memory in Mem0 using semantic storage
+   */
   async createMemory(options: CreateMemoryOptions): Promise<string> {
     try {
-      if (!this.isInitialized) {
-        await this.initialize();
+      const { content, userId, interactionId, memoryType, tags = [], importance = 5 } = options;
+
+      if (!this.isConnected || !this.client) {
+        logger.warn('Mem0 not connected, cannot create semantic memory');
+        throw new BadRequestError('Mem0 service not available', ErrorCodes.MEM0_ERROR);
       }
 
-      const { content, userId, interactionId, memoryType, tags, importance } = options;
-
-      // Prepare memory content
-      let memoryContent = '';
-      const mediaUrls: string[] = [];
-
-      if (content.text) {
-        memoryContent = content.text;
-      }
-
-      if (content.imageUrl) {
-        mediaUrls.push(content.imageUrl);
-        if (!memoryContent) {
-          memoryContent = `[Image memory]`;
-        }
-      }
-
-      if (content.audioUrl) {
-        mediaUrls.push(content.audioUrl);
-        if (!memoryContent) {
-          memoryContent = `[Audio memory]`;
-        }
-      }
-
-      // Prepare metadata
-      const metadata = {
+      // Format memory content for semantic storage with enhanced context
+      let memoryText = '';
+      const metadata: Record<string, unknown> = {
         userId,
         interactionId,
         memoryType,
-        tags: tags || [],
-        importance: importance || 1,
-        mediaUrls,
+        importance,
+        tags,
         timestamp: new Date().toISOString(),
+        date: new Date().toISOString().split('T')[0], // For day-based queries
         ...content.metadata,
       };
 
-      let memoryId: string;
-
-      if (this.usePackage && this.memory) {
-        // Use mem0ai package
-        try {
-          const messages = [
-            {
-              role: "user" as const,
-              content: memoryContent
-            }
-          ];
-
-          const result = await this.memory.add(messages, { 
-            userId, 
-            metadata 
-          });
-
-          memoryId = Array.isArray(result) && result.length > 0 ? result[0].id : 
-                     (result as any).id || 
-                     `mem_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-          logger.info('Memory created using mem0ai package', {
-            memoryId,
-            userId,
-            memoryType,
-            contentLength: memoryContent.length,
-            hasMedia: mediaUrls.length > 0,
-          });
-        } catch (error) {
-          logger.warn('mem0ai package failed, falling back to local storage', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-          // Fall back to local storage
-          memoryId = await this.createMemoryFallback(memoryContent, metadata);
-        }
-      } else {
-        // Use fallback storage
-        memoryId = await this.createMemoryFallback(memoryContent, metadata);
+      if (content.text) {
+        memoryText = content.text;
+        
+        // Enhance memory with semantic context for better Mem0 understanding
+        memoryText = this.enhanceMemoryContext(content.text, tags);
       }
+
+      if (content.imageUrl) {
+        metadata['imageUrl'] = content.imageUrl;
+        memoryText += `\n[Visual memory - image contains: ${content.metadata?.['imageDescription'] || 'visual content'}]`;
+      }
+
+      if (content.audioUrl) {
+        metadata['audioUrl'] = content.audioUrl;
+        memoryText += `\n[Audio memory - contains: ${content.metadata?.['audioTranscription'] || 'spoken content'}]`;
+      }
+
+      // Create memory in Mem0 with semantic embeddings
+      const messages = [
+        {
+          role: "user" as const,
+          content: memoryText
+        }
+      ];
+
+      const response = await this.client.add(messages, {
+        user_id: userId,
+        metadata: metadata
+      });
+
+      const memoryId = Array.isArray(response) && response.length > 0 && response[0] ? 
+        response[0].id || `mem_${Date.now()}` : 
+        `mem_${Date.now()}`;
+
+      logger.info('Memory created in Mem0 semantic storage', {
+        memoryId,
+        userId,
+        interactionId,
+        memoryType,
+        contentLength: memoryText.length,
+        hasMetadata: Object.keys(metadata).length > 0,
+        tags: tags.length
+      });
 
       return memoryId;
     } catch (error) {
-      logger.error('Failed to create memory', {
+      logger.error('Error creating memory in Mem0', {
         error: error instanceof Error ? error.message : 'Unknown error',
         userId: options.userId,
         memoryType: options.memoryType,
       });
-
       throw new BadRequestError(
-        'Failed to create memory',
-        ErrorCodes.MEMORY_CREATION_FAILED
+        `Failed to create semantic memory: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        ErrorCodes.MEM0_ERROR
       );
     }
   }
 
-  private async createMemoryFallback(content: string, metadata: any): Promise<string> {
-    this.memoryCounter++;
-    const memoryId = `mem_${this.memoryCounter}_${Date.now()}`;
-    
-    this.memoryStore.set(memoryId, {
-      id: memoryId,
-      content,
-      metadata,
-      createdAt: new Date().toISOString(),
-    });
-
-    logger.info('Memory created in local fallback storage', {
-      memoryId,
-      userId: metadata.userId,
-      memoryType: metadata.memoryType,
-      contentLength: content.length,
-      hasMedia: metadata.mediaUrls?.length > 0,
-    });
-
-    return memoryId;
-  }
-
+  /**
+   * Search memories using Mem0's semantic search capabilities
+   */
   async searchMemories(query: string, userId?: string, limit: number = 10): Promise<MemorySearchResult[]> {
     try {
-      if (!this.isInitialized) {
-        await this.initialize();
+      if (!this.isConnected || !this.client) {
+        logger.warn('Mem0 not connected, cannot perform semantic search');
+        return [];
       }
 
-      if (this.usePackage && this.memory) {
-        try {
-          const searchOptions: any = {};
-          if (userId) {
-            searchOptions.userId = userId;
-          }
+      // Use Mem0's semantic search
+      const response = await this.client.search(query, {
+        user_id: userId,
+        limit
+      });
 
-          const results = await this.memory.search(query, searchOptions);
-          const resultsArray = Array.isArray(results) ? results : [results];
-          
-          const memoryResults: MemorySearchResult[] = resultsArray.slice(0, limit).map((memory: any) => ({
-            id: memory.id || memory.memory_id || 'unknown',
-            content: memory.content || memory.memory || '',
-            metadata: memory.metadata || {},
-            score: memory.score || 0,
-          }));
+      const results: MemorySearchResult[] = Array.isArray(response) ? 
+        response.map((result: any) => ({
+          id: (result['id'] as string) || `result_${Date.now()}`,
+          content: (result['memory'] as string) || (result['content'] as string) || '',
+          metadata: (result['metadata'] as Record<string, unknown>) || {},
+          score: (result['score'] as number) || 0.8
+        })) : [];
 
-          logger.info('Memories searched using mem0ai package', {
-            query,
-            resultsCount: memoryResults.length,
-            userId,
-            limit,
-          });
+      logger.info('Semantic search completed', {
+        query,
+        userId,
+        resultsCount: results.length,
+        limit,
+        hasResults: results.length > 0
+      });
 
-          return memoryResults;
-        } catch (error) {
-          logger.warn('mem0ai search failed, falling back to local search', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-          // Fall back to local search
-          return this.searchMemoriesFallback(query, userId, limit);
-        }
-      } else {
-        return this.searchMemoriesFallback(query, userId, limit);
-      }
+      return results;
     } catch (error) {
-      logger.error('Failed to search memories', {
+      logger.error('Error searching memories in Mem0', {
         error: error instanceof Error ? error.message : 'Unknown error',
         query,
         userId,
       });
-
       return [];
     }
   }
 
-  private searchMemoriesFallback(query: string, userId?: string, limit: number = 10): MemorySearchResult[] {
-    const results: MemorySearchResult[] = [];
-    const queryLower = query.toLowerCase();
-
-    for (const [, memory] of this.memoryStore) {
-      // Filter by userId if provided
-      if (userId && memory.metadata.userId !== userId) {
-        continue;
-      }
-
-      // Simple text matching
-      const content = memory.content.toLowerCase();
-      if (content.includes(queryLower)) {
-        // Calculate simple score based on query position
-        const firstIndex = content.indexOf(queryLower);
-        const score = firstIndex === 0 ? 1.0 : 1.0 - (firstIndex / content.length);
-
-        results.push({
-          id: memory.id,
-          content: memory.content,
-          metadata: memory.metadata,
-          score,
-        });
-      }
-    }
-
-    // Sort by score and limit
-    const sortedResults = results.sort((a, b) => b.score - a.score).slice(0, limit);
-
-    logger.info('Memories searched using fallback storage', {
-      query,
-      resultsCount: sortedResults.length,
-      userId,
-      limit,
-    });
-
-    return sortedResults;
-  }
-
-  async getMemories(userId: string, limit: number = 50): Promise<MemorySearchResult[]> {
+  /**
+   * Get all memories for a user using Mem0
+   */
+  async getAllMemories(userId: string, limit: number = 100): Promise<MemorySearchResult[]> {
     try {
-      if (!this.isInitialized) {
-        await this.initialize();
+      if (!this.isConnected || !this.client) {
+        logger.warn('Mem0 not connected, cannot retrieve memories');
+        return [];
       }
 
-      if (this.usePackage && this.memory) {
-        try {
-          const memories = await this.memory.getAll({ userId });
-          const memoriesArray = Array.isArray(memories) ? memories : [memories];
-          
-          const memoryResults: MemorySearchResult[] = memoriesArray.slice(0, limit).map((memory: any) => ({
-            id: memory.id || memory.memory_id || 'unknown',
-            content: memory.content || memory.memory || '',
-            metadata: memory.metadata || {},
-            score: 1.0,
-          }));
+      // Get all memories for user
+      const response = await this.client.getAll({
+        user_id: userId,
+        limit
+      });
 
-          logger.info('Retrieved memories using mem0ai package', {
-            userId,
-            count: memoryResults.length,
-            limit,
-          });
+      const memories: MemorySearchResult[] = Array.isArray(response) ? 
+        response.map((memory: any) => ({
+          id: (memory['id'] as string) || `mem_${Date.now()}`,
+          content: (memory['memory'] as string) || (memory['content'] as string) || '',
+          metadata: (memory['metadata'] as Record<string, unknown>) || {},
+          score: 1.0 // Full score for direct retrieval
+        })) : [];
 
-          return memoryResults;
-        } catch (error) {
-          logger.warn('mem0ai getAll failed, falling back to local storage', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-          return this.getMemoriesFallback(userId, limit);
-        }
-      } else {
-        return this.getMemoriesFallback(userId, limit);
-      }
+      logger.info('Retrieved all memories for user', {
+        userId,
+        memoriesCount: memories.length,
+        limit
+      });
+
+      return memories;
     } catch (error) {
-      logger.error('Failed to get memories', {
+      logger.error('Error retrieving all memories from Mem0', {
         error: error instanceof Error ? error.message : 'Unknown error',
         userId,
       });
-
       return [];
     }
   }
 
-  private getMemoriesFallback(userId: string, limit: number = 50): MemorySearchResult[] {
-    const results: MemorySearchResult[] = [];
-
-    for (const [, memory] of this.memoryStore) {
-      if (memory.metadata.userId === userId) {
-        results.push({
-          id: memory.id,
-          content: memory.content,
-          metadata: memory.metadata,
-          score: 1.0,
-        });
-      }
-    }
-
-    const limitedResults = results.slice(0, limit);
-
-    logger.info('Retrieved memories using fallback storage', {
-      userId,
-      count: limitedResults.length,
-      limit,
-    });
-
-    return limitedResults;
-  }
-
-  async updateMemory(memoryId: string, content: string, metadata?: Record<string, any>): Promise<void> {
+  /**
+   * Delete a memory from Mem0
+   */
+  async deleteMemory(memoryId: string): Promise<boolean> {
     try {
-      if (!this.isInitialized) {
-        await this.initialize();
+      if (!this.isConnected || !this.client) {
+        logger.warn('Mem0 not connected, cannot delete memory');
+        return false;
       }
 
-      if (this.usePackage && this.memory) {
-        try {
-          await this.memory.update(memoryId, content);
-          logger.info('Memory updated using mem0ai package', { memoryId });
-          return;
-        } catch (error) {
-          logger.warn('mem0ai update failed, falling back to local storage', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
+      await this.client.delete(memoryId);
 
-      // Fallback update
-      const memory = this.memoryStore.get(memoryId);
-      if (memory) {
-        memory.content = content;
-        if (metadata) {
-          memory.metadata = { ...memory.metadata, ...metadata };
-        }
-        memory.updatedAt = new Date().toISOString();
-        this.memoryStore.set(memoryId, memory);
-        
-        logger.info('Memory updated using fallback storage', { memoryId });
-      } else {
-        throw new Error('Memory not found');
-      }
+      logger.info('Memory deleted from Mem0', {
+        memoryId
+      });
+
+      return true;
     } catch (error) {
-      logger.error('Failed to update memory', {
+      logger.error('Error deleting memory from Mem0', {
         error: error instanceof Error ? error.message : 'Unknown error',
         memoryId,
-      });
-
-      throw new BadRequestError(
-        'Failed to update memory',
-        ErrorCodes.MEMORY_UPDATE_FAILED
-      );
-    }
-  }
-
-  async deleteMemory(memoryId: string): Promise<void> {
-    try {
-      if (!this.isInitialized) {
-        await this.initialize();
-      }
-
-      if (this.usePackage && this.memory) {
-        try {
-          await this.memory.delete(memoryId);
-          logger.info('Memory deleted using mem0ai package', { memoryId });
-          return;
-        } catch (error) {
-          logger.warn('mem0ai delete failed, falling back to local storage', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
-
-      // Fallback delete
-      const deleted = this.memoryStore.delete(memoryId);
-      if (deleted) {
-        logger.info('Memory deleted using fallback storage', { memoryId });
-      } else {
-        throw new Error('Memory not found');
-      }
-    } catch (error) {
-      logger.error('Failed to delete memory', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        memoryId,
-      });
-
-      throw new BadRequestError(
-        'Failed to delete memory',
-        ErrorCodes.MEMORY_DELETION_FAILED
-      );
-    }
-  }
-
-  async deleteAllMemories(userId: string): Promise<void> {
-    try {
-      if (!this.isInitialized) {
-        await this.initialize();
-      }
-
-      if (this.usePackage && this.memory) {
-        try {
-          await this.memory.deleteAll({ userId });
-          logger.info('All memories deleted using mem0ai package', { userId });
-          return;
-        } catch (error) {
-          logger.warn('mem0ai deleteAll failed, falling back to local storage', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
-
-      // Fallback delete all
-      let deletedCount = 0;
-      for (const [id, memory] of this.memoryStore) {
-        if (memory.metadata.userId === userId) {
-          this.memoryStore.delete(id);
-          deletedCount++;
-        }
-      }
-
-      logger.info('All memories deleted using fallback storage', { 
-        userId, 
-        deletedCount 
-      });
-    } catch (error) {
-      logger.error('Failed to delete all memories', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        userId,
-      });
-
-      throw new BadRequestError(
-        'Failed to delete all memories',
-        ErrorCodes.MEMORY_DELETION_FAILED
-      );
-    }
-  }
-
-  async getMemoryHistory(memoryId: string): Promise<any[]> {
-    try {
-      if (!this.isInitialized) {
-        await this.initialize();
-      }
-
-      if (this.usePackage && this.memory) {
-        try {
-          const history = await this.memory.history(memoryId);
-          logger.info('Retrieved memory history using mem0ai package', {
-            memoryId,
-            historyCount: history.length,
-          });
-          return history;
-        } catch (error) {
-          logger.warn('mem0ai history failed, no fallback available', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
-
-      // No fallback for history
-      return [];
-    } catch (error) {
-      logger.error('Failed to get memory history', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        memoryId,
-      });
-
-      return [];
-    }
-  }
-
-  async healthCheck(): Promise<boolean> {
-    try {
-      if (!this.isInitialized) {
-        await this.initialize();
-      }
-
-      if (this.usePackage && this.memory) {
-        try {
-          await this.memory.search('health_check', { userId: 'system_health_check' });
-          return true;
-        } catch (error) {
-          logger.warn('mem0ai health check failed, but fallback is available', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
-
-      // Fallback is always healthy if initialized
-      return this.isInitialized;
-    } catch (error) {
-      logger.error('Mem0 health check failed', {
-        error: error instanceof Error ? error.message : 'Unknown error',
       });
       return false;
     }
   }
 
-  async resetMemories(): Promise<void> {
+  /**
+   * Update memory metadata in Mem0
+   */
+  async updateMemory(memoryId: string, content: string, metadata?: Record<string, unknown>): Promise<boolean> {
     try {
-      if (!this.isInitialized) {
-        await this.initialize();
+      if (!this.isConnected || !this.client) {
+        logger.warn('Mem0 not connected, cannot update memory');
+        return false;
       }
 
-      if (this.usePackage && this.memory) {
-        try {
-          await this.memory.reset();
-          logger.info('All memories reset using mem0ai package');
-          return;
-        } catch (error) {
-          logger.warn('mem0ai reset failed, falling back to local storage', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
+      await this.client.update(memoryId, content);
 
-      // Fallback reset
-      this.memoryStore.clear();
-      this.memoryCounter = 0;
-      logger.info('All memories reset using fallback storage');
-    } catch (error) {
-      logger.error('Failed to reset memories', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+      logger.info('Memory updated in Mem0', {
+        memoryId,
+        hasMetadata: !!metadata
       });
 
-      throw new BadRequestError(
-        'Failed to reset memories',
-        ErrorCodes.MEMORY_DELETION_FAILED
-      );
+      return true;
+    } catch (error) {
+      logger.error('Error updating memory in Mem0', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        memoryId,
+      });
+      return false;
     }
   }
 
-  async getMemoryStats(userId?: string): Promise<{ totalMemories: number; userMemories?: number }> {
+  /**
+   * Get memory context for a user - useful for conversational AI
+   */
+  async getMemoryContext(userId: string, query?: string): Promise<string[]> {
     try {
-      if (!this.isInitialized) {
-        await this.initialize();
+      if (!this.isConnected || !this.client) {
+        return [];
       }
 
-      const stats: { totalMemories: number; userMemories?: number } = {
-        totalMemories: 0,
-      };
+      let memories: MemorySearchResult[] = [];
 
-      if (this.usePackage && this.memory) {
-        try {
-          if (userId) {
-            const userMemories = await this.getMemories(userId, 1000);
-            stats.userMemories = userMemories.length;
-          }
-          stats.totalMemories = stats.userMemories || 0;
-          return stats;
-        } catch (error) {
-          logger.warn('mem0ai stats failed, falling back to local count', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
+      if (query) {
+        // Search for relevant memories
+        memories = await this.searchMemories(query, userId, 5);
+      } else {
+        // Get recent memories
+        memories = await this.getAllMemories(userId, 10);
       }
 
-      // Fallback stats
-      stats.totalMemories = this.memoryStore.size;
-      if (userId) {
-        stats.userMemories = Array.from(this.memoryStore.values())
-          .filter(memory => memory.metadata.userId === userId).length;
-      }
-
-      return stats;
+      // Return memory contents for context
+      return memories.map(memory => memory.content);
     } catch (error) {
-      logger.error('Failed to get memory statistics', {
+      logger.error('Error getting memory context', {
         error: error instanceof Error ? error.message : 'Unknown error',
         userId,
+        query
       });
-
-      return { totalMemories: 0, userMemories: 0 };
+      return [];
     }
   }
 
-  // Get current implementation info
-  getImplementationInfo(): { usePackage: boolean; isInitialized: boolean; fallbackSize: number } {
-    return {
-      usePackage: this.usePackage,
-      isInitialized: this.isInitialized,
-      fallbackSize: this.memoryStore.size,
-    };
+  /**
+   * Check if Mem0 is properly connected
+   */
+  isMemoryServiceConnected(): boolean {
+    return this.isConnected && this.client !== null;
+  }
+
+  /**
+   * Enhance memory content for better semantic understanding by Mem0
+   * This is crucial for showcasing Mem0's capabilities for facts, recalls, and personal knowledge
+   */
+  private enhanceMemoryContext(text: string, tags: string[] = []): string {
+    let enhancedText = text;
+    const now = new Date();
+    const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+    const date = now.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+
+    // Add temporal context for better "when did I say" queries
+    enhancedText += `\n[Recorded on ${dayName}, ${date}]`;
+
+    // Detect and enhance different types of personal knowledge for Mem0
+    if (this.isBirthdayMention(text)) {
+      enhancedText += `\n[PERSONAL FACT: Birthday information - important for future recall]`;
+    }
+
+    if (this.isTravelPlan(text)) {
+      enhancedText += `\n[PERSONAL PLAN: Travel/trip planning - future event to remember]`;
+    }
+
+    if (this.isTaskOrTodo(text)) {
+      enhancedText += `\n[PERSONAL TASK: To-do item or responsibility - action required]`;
+    }
+
+    if (this.isMeetingNote(text)) {
+      enhancedText += `\n[MEETING MEMORY: Professional discussion or appointment - important for work context]`;
+    }
+
+    if (this.isPreferenceOrOpinion(text)) {
+      enhancedText += `\n[PERSONAL PREFERENCE: Opinion or preference expressed - valuable for future recommendations]`;
+    }
+
+    if (this.isRelationshipInfo(text)) {
+      enhancedText += `\n[RELATIONSHIP INFO: Information about people or social connections]`;
+    }
+
+    // Add mood and emotional context if detected in tags
+    const emotionalTags = tags.filter(tag => 
+      ['happy', 'sad', 'excited', 'stressed', 'angry', 'calm', 'worried', 'confident', 'nervous'].includes(tag.toLowerCase())
+    );
+    
+    if (emotionalTags.length > 0) {
+      enhancedText += `\n[EMOTIONAL STATE: Feeling ${emotionalTags.join(', ')} - important for mood-based recall]`;
+    }
+
+    return enhancedText;
+  }
+
+  // Helper methods to detect different types of personal knowledge for Mem0
+  private isBirthdayMention(text: string): boolean {
+    const birthdayKeywords = ['birthday', 'born on', 'turns', 'age', 'celebrating', 'party for'];
+    return birthdayKeywords.some(keyword => text.toLowerCase().includes(keyword));
+  }
+
+  private isTravelPlan(text: string): boolean {
+    const travelKeywords = ['trip to', 'travel', 'vacation', 'flight', 'hotel', 'visit', 'going to', 'plane', 'airport'];
+    return travelKeywords.some(keyword => text.toLowerCase().includes(keyword));
+  }
+
+  private isTaskOrTodo(text: string): boolean {
+    const taskKeywords = ['need to', 'have to', 'should', 'must', 'remind me', 'todo', 'task', 'complete', 'finish'];
+    return taskKeywords.some(keyword => text.toLowerCase().includes(keyword));
+  }
+
+  private isMeetingNote(text: string): boolean {
+    const meetingKeywords = ['meeting', 'call', 'conference', 'discussion', 'agenda', 'notes from', 'talked about'];
+    return meetingKeywords.some(keyword => text.toLowerCase().includes(keyword));
+  }
+
+  private isPreferenceOrOpinion(text: string): boolean {
+    const preferenceKeywords = ['i like', 'i love', 'i hate', 'i prefer', 'favorite', 'best', 'worst', 'opinion'];
+    return preferenceKeywords.some(keyword => text.toLowerCase().includes(keyword));
+  }
+
+  private isRelationshipInfo(text: string): boolean {
+    const relationshipKeywords = ['friend', 'family', 'colleague', 'boss', 'partner', 'spouse', 'child', 'parent'];
+    return relationshipKeywords.some(keyword => text.toLowerCase().includes(keyword));
+  }
+
+  /**
+   * Enhanced search with better query understanding for Mem0 demo
+   */
+  async searchMemoriesWithContext(query: string, userId: string, timeframe?: string): Promise<MemorySearchResult[]> {
+    try {
+      if (!this.isConnected || !this.client) {
+        logger.warn('Mem0 not connected, cannot perform semantic search');
+        return [];
+      }
+
+      // Enhance query for better Mem0 semantic understanding
+      let enhancedQuery = query;
+      
+      // Add temporal context for time-based queries
+      if (timeframe) {
+        enhancedQuery += ` [timeframe: ${timeframe}]`;
+      }
+
+      // Detect intent and enhance query accordingly
+      if (query.toLowerCase().includes('birthday')) {
+        enhancedQuery += ' [searching for: personal facts, birthday information]';
+      }
+      
+      if (query.toLowerCase().includes('travel') || query.toLowerCase().includes('trip')) {
+        enhancedQuery += ' [searching for: travel plans, vacation information]';
+      }
+      
+      if (query.toLowerCase().includes('task') || query.toLowerCase().includes('todo')) {
+        enhancedQuery += ' [searching for: tasks, responsibilities, things to do]';
+      }
+      
+      if (query.toLowerCase().includes('meeting') || query.toLowerCase().includes('work')) {
+        enhancedQuery += ' [searching for: professional discussions, work-related information]';
+      }
+
+      // Use enhanced query with Mem0
+      const response = await this.client.search(enhancedQuery, {
+        user_id: userId,
+        limit: 10
+      });
+
+      const results: MemorySearchResult[] = Array.isArray(response) ? 
+        response.map((result: any) => ({
+          id: (result['id'] as string) || `result_${Date.now()}`,
+          content: (result['memory'] as string) || (result['content'] as string) || '',
+          metadata: (result['metadata'] as Record<string, unknown>) || {},
+          score: (result['score'] as number) || 0.8
+        })) : [];
+
+      logger.info('Enhanced Mem0 semantic search completed', {
+        originalQuery: query,
+        enhancedQuery,
+        userId,
+        resultsCount: results.length,
+        timeframe,
+        hasResults: results.length > 0
+      });
+
+      return results;
+    } catch (error) {
+      logger.error('Error in enhanced Mem0 search', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        query,
+        userId,
+        timeframe
+      });
+      return [];
+    }
   }
 }
 
 // Export singleton instance
-export const mem0Service = new Mem0Service();
+let mem0ServiceInstance: Mem0Service | null = null;
 
-// Legacy function for backwards compatibility
-export function getMem0Service(): Mem0Service {
-  return mem0Service;
-}
+export const getMem0Service = (): Mem0Service => {
+  if (!mem0ServiceInstance) {
+    mem0ServiceInstance = new Mem0Service();
+  }
+  return mem0ServiceInstance;
+};

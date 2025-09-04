@@ -142,3 +142,5 @@ context/
 /src/generated/prisma
 flows/
 dev.db
+
+storage/*

@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import fetch from 'node-fetch';
 import { env } from '../config/environment';
 import logger from '../config/logger';
 import { BadRequestError, ErrorCodes } from '../utils/errors';
@@ -23,7 +24,9 @@ export class LocalStorageService {
 
   constructor() {
     this.storageDir = path.join(process.cwd(), 'storage', 'media');
-    this.baseUrl = `${env.HOST}:${env.PORT}/media`;
+    // Use ngrok URL for media if available, otherwise fall back to localhost
+    const publicBaseUrl = process.env['NGROK_URL'] || process.env['PUBLIC_URL'];
+    this.baseUrl = publicBaseUrl ? `${publicBaseUrl}/media` : `http://${env.HOST}:${env.PORT}/media`;
     
     // Ensure storage directory exists
     this.ensureStorageDir();

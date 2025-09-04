@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { getDatabase } from '../services/database';
 import logger from '../config/logger';
-import { NotFoundError } from '../utils/errors';
 
 export class InteractionController {
   /**

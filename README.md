@@ -1,468 +1,406 @@
 # WhatsApp Memory Assistant
 
-A WhatsApp chatbot that uses Twilio's WhatsApp API and Mem0's memory layer to ingest and recall images, audio, and text as memories. The bot supports natural language queries and provides persistent memory storage with multimodal content processing.
+A sophisticated AI-powered WhatsApp chatbot that ingests, stores, and recalls multimodal memories (text, images, audio) with advanced features like mood detection, geo-tagging, and semantic search.
 
-## 🚀 Features
+## 🎥 Demo Video
 
-- **Multimodal Message Ingestion**: Accept and process text, images, voice notes, and documents
-- **Semantic Memory Storage**: Store entries in Mem0 with metadata and embeddings for fast, semantic retrieval
-- **Database Persistence**: Custom schema to capture user interactions and memories with idempotent ingestion
-- **Interactive Chat**: Handle conversational queries using context awareness
-- **Memory Listing**: `/list` command to enumerate all user memories
-- **DB-backed Queries & Analytics**: Endpoints for recent interactions and analytics summary
-- **Media Deduplication**: SHA-256 fingerprinting for identical media files
-- **Timezone-aware Filtering**: Support "last week" type queries in user's timezone
-- **Real-time Processing**: Live media download, transcription, and memory creation
+[![WhatsApp Memory Assistant Demo](https://img.youtube.com/vi/K2dZieuZjnU/maxresdefault.jpg)](https://youtu.be/K2dZieuZjnU)
 
-## 🏗️ Architecture
+**[📺 Watch Full Demo](https://youtu.be/K2dZieuZjnU)** - See the complete WhatsApp Memory Assistant in action!
 
-### System Components
+## 🌟 Features
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   WhatsApp      │    │   Twilio API    │    │   Memory Jar    │
-│   (User)        │◄──►│   (Webhook)     │◄──►│   (Backend)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                                        │
-                                                        ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Mem0 API      │    │   OpenAI        │    │   PostgreSQL    │
-│   (Memory)      │◄──►│   (Whisper)     │◄──►│   (Database)    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
+### Core Functionality
+- **Multimodal Ingestion**: Process text messages, images, and voice notes
+- **Semantic Memory Storage**: Powered by Mem0 for intelligent retrieval
+- **Natural Language Queries**: Search memories using conversational language
+- **Database Persistence**: Custom PostgreSQL schema with full analytics
+- **Idempotent Processing**: Duplicate message prevention using Twilio MessageSid
+- **Media Deduplication**: SHA-256 fingerprinting to avoid storing identical files
 
-### Technology Stack
+### Innovative Features
+- **🧠 AI Mood Detection**: Emotional analysis of messages and media
+- **📍 Geo-tagging**: Automatic location extraction and memory geo-tagging
+- **⏰ Smart Reminders**: Natural language reminder scheduling
+- **🔗 Memory Sharing**: Share memories between WhatsApp users
+- **📊 Analytics Dashboard**: Comprehensive usage statistics and insights
+- **🌍 Timezone Awareness**: Support for queries like "last week" in user's timezone
 
-- **Backend**: Node.js with TypeScript and Express.js
+## 🏗 Architecture
+
+### Tech Stack
+- **Backend**: Node.js + TypeScript + Express.js
 - **Database**: PostgreSQL with Prisma ORM
-- **Memory Layer**: Mem0 for semantic memory storage and retrieval
-- **Media Processing**: OpenAI Whisper for audio transcription
-- **WhatsApp Integration**: Twilio WhatsApp API
-- **File Storage**: Local storage with deduplication
-- **Validation**: Zod schema validation
-- **Testing**: Jest for unit and integration tests
+- **AI Services**: OpenAI (Whisper, GPT-4), Mem0 Memory Layer
+- **WhatsApp**: Twilio WhatsApp Business API
+- **Storage**: Local file system with deduplication
+- **Testing**: Jest with comprehensive test coverage
 
-## 📋 Prerequisites
+### Database Schema
+```
+Users → Interactions → Memories
+  ↓         ↓           ↓
+MediaFiles ← Analytics  Reminders
+  ↓
+SharedMemories
+```
 
+## 🚀 Quick Start
+
+### Prerequisites
 - Node.js 18+ and npm
 - PostgreSQL database
-- Twilio account with WhatsApp sandbox
-- Mem0 API key
+- Twilio WhatsApp Business account
 - OpenAI API key
+- Mem0 API key
 
-## 🛠️ Installation
+### 1. Environment Setup
+```bash
+# Clone repository
+git clone https://github.com/deepam-kapur/memory-jar.git
+cd memory-jar
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd memory-jar
-   ```
+# Install dependencies
+npm install
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   ```
-   
-   Edit `.env` with your configuration:
-   ```env
-   # Application Configuration
-   NODE_ENV=development
-   PORT=3000
-   HOST=localhost
-
-   # PostgreSQL Database Configuration
-   DB_HOST=localhost
-   DB_PORT=5432
-   DB_USER=your_username
-   DB_PASS=your_password
-   DB_NAME=memory_jar
-   DATABASE_URL=postgresql://${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}
-
-   # Twilio Configuration
-   TWILIO_ACCOUNT_SID=your_twilio_account_sid
-   TWILIO_AUTH_TOKEN=your_twilio_auth_token
-   TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
-
-   # Mem0 Configuration
-   MEM0_API_KEY=your_mem0_api_key
-   MEM0_BASE_URL=https://api.mem0.ai
-
-   # OpenAI Configuration (for Whisper)
-   OPENAI_API_KEY=your_openai_api_key
-
-   # Security Configuration
-   JWT_SECRET=your_jwt_secret_32_characters_long_minimum_required
-   API_KEY=your-api-key-16-chars
-
-   # Logging Configuration
-   LOG_LEVEL=info
-   LOG_FILE=logs/app.log
-   ```
-
-4. **Set up the database**
-   ```bash
-   # Set up PostgreSQL database and run migrations
-   ./scripts/setup-local-db.sh
-   ```
-
-5. **Build the project**
-   ```bash
-   npm run build
-   ```
-
-6. **Start the server**
-   ```bash
-   npm start
-   ```
-
-## 🔧 Configuration
-
-### Twilio WhatsApp Setup
-
-1. Create a Twilio account and get your Account SID and Auth Token
-2. Set up WhatsApp sandbox in Twilio Console
-3. Configure webhook URL: `https://your-domain.com/webhook`
-4. Add your Twilio credentials to `.env`
-
-### Mem0 Setup
-
-1. Sign up for Mem0 at [mem0.ai](https://mem0.ai)
-2. Get your API key from the dashboard
-3. Add your Mem0 API key to `.env`
-
-### OpenAI Setup
-
-1. Create an OpenAI account and get your API key
-2. Add your OpenAI API key to `.env` for Whisper transcription
-
-## 📡 API Endpoints
-
-### Core Endpoints
-
-#### `POST /webhook`
-Handles incoming Twilio WhatsApp messages.
-
-**Request Body:**
-```json
-{
-  "MessageSid": "SM1234567890",
-  "From": "whatsapp:+1234567890",
-  "Body": "Hello world",
-  "NumMedia": "0"
-}
+# Copy environment template
+cp .env.example .env
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Webhook processed successfully",
-  "userId": "user_123",
-  "memoryId": "memory_456"
-}
+### 2. Configure Environment Variables
+```env
+# Database
+DATABASE_URL="postgresql://user:password@localhost:5432/memory_jar"
+
+# Twilio WhatsApp
+TWILIO_ACCOUNT_SID="your_account_sid"
+TWILIO_AUTH_TOKEN="your_auth_token"
+TWILIO_WHATSAPP_NUMBER="whatsapp:+1234567890"
+TWILIO_WEBHOOK_URL="https://your-domain.com/webhook"
+
+# AI Services
+OPENAI_API_KEY="sk-..."
+MEM0_API_KEY="your_mem0_api_key"
+
+# Application
+NODE_ENV="development"
+PORT=3000
+LOG_LEVEL="info"
 ```
 
-#### `POST /memories`
-Add multimodal memories (text, image, audio).
+### 3. Database Setup
+```bash
+# Generate Prisma client
+npm run db:generate
 
-**Request Body:**
-```json
-{
-  "content": "Remember to buy groceries",
-  "userId": "user_123",
-  "memoryType": "TEXT",
-  "tags": ["reminder", "groceries"]
-}
+# Run database migrations
+npm run db:migrate
+
+# Seed initial data (optional)
+npm run db:seed
 ```
 
-#### `GET /memories?query=<text>`
-Search memories via Mem0 + enrich with DB.
+### 4. Twilio WhatsApp Configuration
 
-**Response:**
-```json
-{
-  "memories": [
-    {
-      "id": "memory_123",
-      "content": "Remember to buy groceries",
-      "memoryType": "TEXT",
-      "score": 0.95,
-      "metadata": {
-        "userId": "user_123",
-        "createdAt": "2024-01-01T12:00:00Z"
-      }
-    }
-  ]
-}
+#### Step 1: Set up Twilio WhatsApp Sandbox
+1. Log in to [Twilio Console](https://console.twilio.com/)
+2. Navigate to Messaging → Try it out → Send a WhatsApp message
+3. Follow sandbox setup instructions
+4. Note your sandbox number and join code
+
+#### Step 2: Configure Webhook
+1. In Twilio Console, go to Phone Numbers → Manage → WhatsApp senders
+2. Select your WhatsApp number
+3. Set webhook URL: `https://your-domain.com/webhook`
+4. Set HTTP method to `POST`
+5. Save configuration
+
+#### Step 3: Enable ngrok for Local Development
+```bash
+# Install ngrok
+npm install -g ngrok
+
+# Expose local server
+ngrok http 3000
+
+# Update TWILIO_WEBHOOK_URL in .env with ngrok URL
 ```
 
-#### `GET /memories/list`
-Return all memories from DB (newest first).
+### 5. Start the Application
+```bash
+# Development mode with hot reload
+npm run dev
 
-#### `GET /interactions/recent?limit=<n>`
-Return recent interactions from DB.
+# Production build
+npm run build
+npm start
 
-#### `GET /analytics/summary`
-Return DB-derived statistics.
+# Run tests
+npm test
+```
 
-### Health Check
+## 📱 Usage
 
-#### `GET /health`
-System health check.
+### WhatsApp Commands
+- **Send any message**: Creates a memory with AI analysis
+- **Send image**: Processes and stores with visual analysis
+- **Send voice note**: Transcribes audio and stores with mood detection
+- **"/list"**: Shows all your memories
+- **"remind me..."**: Creates smart reminders
+- **Search queries**: "When was I stressed?", "Show me happy memories"
 
-**Response:**
-```json
-{
-  "status": "healthy",
-  "timestamp": "2024-01-01T12:00:00Z",
-  "services": {
-    "database": "healthy",
-    "mem0": "healthy",
-    "twilio": "healthy",
-    "openai": "healthy"
-  }
-}
+### API Endpoints
+
+#### Core Endpoints
+```http
+POST /webhook
+# Handle incoming WhatsApp messages
+
+GET /memories?query=<text>
+# Search memories with natural language
+
+GET /memories/list
+# List all memories (newest first)
+
+POST /memories
+# Create memory manually
+
+GET /interactions/recent?limit=<n>
+# Get recent interactions
+
+GET /analytics/summary
+# Get usage statistics
+```
+
+#### Advanced Features
+```http
+POST /reminders
+# Create scheduled reminders
+
+GET /reminders?status=PENDING
+# List user reminders
+
+POST /sharing/share
+# Share memory with another user
+
+GET /media/:filename
+# Access stored media files
+```
+
+### Example API Calls
+
+#### Search Memories
+```bash
+curl "http://localhost:3000/memories?query=stressed%20this%20week"
+```
+
+#### Get Analytics
+```bash
+curl "http://localhost:3000/analytics/summary"
+```
+
+#### Recent Interactions
+```bash
+curl "http://localhost:3000/interactions/recent?limit=10"
 ```
 
 ## 🧪 Testing
 
-### Run Tests
+### Run Test Suite
 ```bash
-# Run all tests
+# All tests
 npm test
 
-# Run tests with coverage
+# Watch mode
+npm run test:watch
+
+# Coverage report
 npm run test:coverage
-
-# Run unit tests only
-npm run test:unit
-
-# Run integration tests only
-npm run test:integration
-
-# Run performance tests
-npm run test:performance
 ```
 
-### E2E Testing
-```bash
-# Run complete E2E test with WhatsApp, Twilio, and ngrok
-./scripts/e2e-test.sh
+### Test Coverage
+- **Controllers**: Webhook, Memory, Analytics, Reminders
+- **Services**: Multimodal processing, Mood detection, Geo-tagging
+- **API Endpoints**: All CRUD operations and search functionality
+- **Database**: Schema validation and data integrity
+- **Integration**: End-to-end WhatsApp message flow
+
+## 📊 Database Design
+
+### Key Design Decisions
+
+#### 1. **Idempotent Processing**
+- Uses Twilio `MessageSid` as unique constraint
+- Prevents duplicate processing of same message
+- Maintains data consistency
+
+#### 2. **Media Deduplication**
+- SHA-256 fingerprinting of media content
+- Reference counting for shared media
+- Significant storage optimization
+
+#### 3. **Timezone Awareness**
+- User timezone detection from phone number
+- Relative time query support ("last week", "yesterday")
+- Consistent timestamp handling
+
+#### 4. **Memory Linkage**
+- Every memory traces back to source interaction
+- Maintains audit trail and context
+- Enables advanced analytics
+
+### Schema Overview
+```sql
+-- Core entities
+Users (id, phoneNumber, timezone, ...)
+Interactions (id, userId, messageSid, messageType, ...)
+Memories (id, userId, interactionId, content, mem0Id, ...)
+MediaFiles (id, userId, fingerprint, fileUrl, ...)
+
+-- Feature entities  
+Reminders (id, userId, memoryId, scheduledFor, ...)
+SharedMemories (id, fromUserId, toUserId, memoryId, ...)
+Analytics (id, eventType, metadata, timestamp, ...)
 ```
 
-This will:
-- Set up the database
-- Start the application
-- Create ngrok tunnel
-- Provide webhook URL for Twilio configuration
-- Guide you through WhatsApp testing
-
-## 📊 Database Schema
-
-### Core Tables
-
-#### Users
-- `id`: Primary key (CUID)
-- `phoneNumber`: WhatsApp phone number (unique)
-- `timezone`: User's timezone
-- `createdAt`: Account creation timestamp
-
-#### Interactions
-- `id`: Primary key (CUID)
-- `userId`: Foreign key to Users
-- `messageSid`: Twilio MessageSid (unique, for idempotency)
-- `messageType`: TEXT, IMAGE, AUDIO, etc.
-- `content`: Message content or description
-- `timestamp`: Message timestamp
-
-#### Memories
-- `id`: Primary key (CUID)
-- `userId`: Foreign key to Users
-- `interactionId`: Foreign key to Interactions
-- `mem0Id`: Mem0 memory ID
-- `content`: Memory content
-- `memoryType`: TEXT, IMAGE, AUDIO, MIXED
-- `tags`: JSON array of tags
-- `importance`: 1-10 scale
-
-#### MediaFiles
-- `id`: Primary key (CUID)
-- `userId`: Foreign key to Users
-- `interactionId`: Foreign key to Interactions
-- `fileName`: Stored filename
-- `originalName`: Original filename
-- `fileType`: MIME type
-- `fileSize`: File size in bytes
-- `fingerprint`: SHA-256 hash for deduplication
-- `transcription`: Audio transcription (if applicable)
-
-## 🔒 Security Features
-
-- **Input Validation**: Zod schema validation for all inputs
-- **Rate Limiting**: Express rate limiting for API protection
-- **XSS Protection**: Input sanitization and cleaning
-- **Error Handling**: Comprehensive error handling without information leakage
-- **Idempotency**: Prevents duplicate processing of messages
-- **Media Deduplication**: SHA-256 fingerprinting for identical files
-
-## 🚀 Deployment
-
-### Production Deployment
-
-1. **Build the application**
-   ```bash
-   npm run build
-   ```
-
-2. **Set production environment variables**
-   ```bash
-   NODE_ENV=production
-   DATABASE_URL="postgresql://user:pass@host:5432/memory_jar"
-   ```
-
-3. **Run database migrations**
-   ```bash
-   npx prisma migrate deploy
-   ```
-
-4. **Start the application**
-   ```bash
-   npm start
-   ```
+## 🔧 Deployment
 
 ### Docker Deployment
-
 ```dockerfile
 FROM node:18-alpine
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production
 COPY dist ./dist
+COPY prisma ./prisma
+RUN npx prisma generate
 EXPOSE 3000
-CMD ["node", "dist/app.js"]
+CMD ["npm", "start"]
 ```
 
-## 📝 Usage Examples
+### Environment Setup
+1. **Production Database**: Set up PostgreSQL with proper credentials
+2. **Twilio Configuration**: Update webhook URL to production domain
+3. **File Storage**: Configure persistent storage for media files
+4. **Monitoring**: Set up logging and error tracking
+5. **SSL/TLS**: Ensure HTTPS for webhook security
 
-### WhatsApp Commands
-
-1. **Send a text message**: "Remember to buy milk tomorrow"
-2. **Send an image**: Upload a photo with caption "My new haircut"
-3. **Send a voice note**: Record "Meeting at 3 PM today"
-4. **Query memories**: "What did I plan for dinner?"
-5. **List all memories**: "/list"
-6. **Search by time**: "Show me memories from last week"
-
-### API Usage
-
+### Health Checks
 ```bash
-# Create a memory
-curl -X POST http://localhost:3000/memories \
-  -H "Content-Type: application/json" \
-  -d '{
-    "content": "Important meeting notes",
-    "userId": "user_123",
-    "memoryType": "TEXT"
-  }'
+# Application health
+curl https://your-domain.com/health
 
-# Search memories
-curl "http://localhost:3000/memories?query=meeting"
-
-# Get analytics
-curl http://localhost:3000/analytics/summary
+# Database connectivity
+curl https://your-domain.com/analytics/summary
 ```
 
-## 🔧 Development
+## 🛠 Development
 
 ### Project Structure
 ```
 src/
-├── config/          # Configuration files
 ├── controllers/     # Request handlers
+├── services/        # Business logic
+├── routes/          # API routing
 ├── middleware/      # Express middleware
-├── routes/          # API routes
-├── services/        # Business logic services
-├── validation/      # Schema validation
-└── utils/           # Utility functions
+├── config/          # Configuration
+├── utils/           # Helper functions
+├── validation/      # Input validation schemas
+├── types/           # TypeScript definitions
+└── __tests__/       # Test files
+
+prisma/
+├── schema.prisma    # Database schema
+└── migrations/      # Database migrations
+
+scripts/
+├── seed.ts          # Database seeding
+├── reset-database.sh # Database reset utility
+└── clear-*.sql      # Database cleanup scripts
 ```
+
+### Code Quality
+- **TypeScript**: Strict type checking
+- **ESLint**: Code linting and formatting
+- **Prettier**: Code formatting
+- **Jest**: Unit and integration testing
+- **Prisma**: Type-safe database operations
 
 ### Adding New Features
+1. **Define API contract** in routes/
+2. **Implement business logic** in services/
+3. **Add database models** in schema.prisma
+4. **Write tests** in __tests__/
+5. **Update documentation**
 
-1. **Create service**: Add business logic in `src/services/`
-2. **Add controller**: Create request handler in `src/controllers/`
-3. **Define route**: Add API endpoint in `src/routes/`
-4. **Add validation**: Create Zod schema in `src/validation/`
-5. **Write tests**: Add test cases in `src/__tests__/`
+## 📈 Analytics & Monitoring
 
-## 🐛 Troubleshooting
+### Available Metrics
+- **Usage Statistics**: Total users, memories, interactions
+- **Content Analysis**: Memory types, mood distribution
+- **Performance**: Response times, error rates
+- **Feature Adoption**: Reminder usage, sharing activity
 
-### Common Issues
-
-1. **Database Connection Error**
-   - Check `DATABASE_URL` in `.env`
-   - Ensure PostgreSQL is running
-   - Run `npx prisma migrate dev`
-
-2. **Twilio Webhook Errors**
-   - Verify webhook URL is accessible
-   - Check Twilio credentials
-   - Ensure webhook signature validation
-
-3. **Mem0 API Errors**
-   - Verify `MEM0_API_KEY` is correct
-   - Check API rate limits
-   - Ensure proper API permissions
-
-4. **Media Processing Issues**
-   - Check file permissions in storage directory
-   - Verify OpenAI API key for transcription
-   - Monitor disk space for media storage
-
-### Logs
-
-Check application logs:
-```bash
-# View application logs
-tail -f logs/app.log
-
-# View error logs
-tail -f logs/exceptions-*.log
+### Monitoring Setup
+```javascript
+// Custom metrics example
+logger.info('Memory created', {
+  userId,
+  memoryType,
+  processingTime: Date.now() - startTime,
+  moodDetected: mood?.mood,
+  hasLocation: !!geoTag
+});
 ```
 
-## 📄 License
+## 🔐 Security
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+### Data Protection
+- **Input Validation**: Zod schema validation on all inputs
+- **SQL Injection Prevention**: Prisma ORM with parameterized queries
+- **Rate Limiting**: Express rate limiting middleware
+- **CORS Configuration**: Restricted cross-origin requests
+- **Helmet.js**: Security headers and XSS protection
+
+### Privacy Considerations
+- **Media Storage**: Local storage with access controls
+- **User Data**: Minimal data collection with explicit consent
+- **Audit Trail**: Complete interaction logging for compliance
 
 ## 🤝 Contributing
 
+### Development Setup
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite
-6. Submit a pull request
+2. Create feature branch: `git checkout -b feature/amazing-feature`
+3. Make changes and add tests
+4. Run test suite: `npm test`
+5. Commit changes: `git commit -m 'Add amazing feature'`
+6. Push to branch: `git push origin feature/amazing-feature`
+7. Open Pull Request
+
+### Code Standards
+- Follow TypeScript best practices
+- Write comprehensive tests for new features
+- Update documentation for API changes
+- Use conventional commit messages
 
 ## 📞 Support
 
-For support and questions:
-- Create an issue in the GitHub repository
-- Check the [documentation](docs/)
-- Review the [troubleshooting guide](#troubleshooting)
+- **Documentation**: [API Documentation](./API_DOCUMENTATION.md)
+- **Demo**: [Demo Video](https://youtu.be/K2dZieuZjnU)
 
-## 🎯 Roadmap
+## 📄 License
 
-- [ ] Real-time memory synchronization
-- [ ] Advanced analytics and insights
-- [ ] Memory sharing between users
-- [ ] Mobile app companion
-- [ ] Integration with calendar apps
-- [ ] Voice command support
-- [ ] Multi-language support
-- [ ] Advanced search filters
-- [ ] Memory export/import
-- [ ] Automated memory categorization
+This project is licensed under the ISC License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **Twilio**: WhatsApp Business API
+- **OpenAI**: Whisper transcription and GPT analysis
+- **Mem0**: Memory layer and semantic search
+- **Prisma**: Database ORM and migrations
+- **Express.js**: Web framework
+
+---
+
+**Built with ❤️ for intelligent memory management through WhatsApp**
