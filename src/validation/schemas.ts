@@ -3,7 +3,11 @@ import { z } from 'zod';
 // Common validation schemas
 export const phoneNumberSchema = z
   .string()
-  .regex(/^\+[1-9]\d{1,14}$/, 'Phone number must be in E.164 format (e.g., +1234567890)');
+  .regex(/^(whatsapp:)?\+[1-9]\d{8,14}$/, 'Phone number must be in E.164 format (e.g., +1234567890) or WhatsApp format');
+
+export const cuidSchema = z
+  .string()
+  .regex(/^c[a-z0-9]{23,24}$/, 'Must be a valid CUID');
 
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -18,8 +22,8 @@ export const searchSchema = z.object({
 // WhatsApp webhook schemas
 export const whatsAppWebhookSchema = z.object({
   MessageSid: z.string(),
-  From: z.string(),
-  To: z.string(),
+  From: z.string().min(1),
+  To: z.string().min(1),
   Body: z.string().optional(),
   NumMedia: z.coerce.number().int().min(0).max(10).optional(),
   AccountSid: z.string().optional(),
